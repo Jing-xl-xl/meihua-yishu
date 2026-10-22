@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "question": "明日我是否能够适应上课",
+      "input": {
+        "question": "明日我是否能够适应上课",
+        "numbers": [
+          31,
+          25,
+          9
+        ],
+        "contextNote": "31、25、9"
+      },
+      "method": "number3",
+      "hex": {
+        "ben": "山天大畜",
+        "hu": {
+          "upper": "zhen",
+          "lower": "dui",
+          "name": "雷泽归妹"
+        },
+        "bian": "山泽损",
+        "movingYao": 3,
+        "ti": "qian",
+        "yong": "gen"
+      },
+      "detail": "1.一开始会有一些难以适应上课的节奏或者模式，需要提前做一些准备\n2.在这个过程中需要对自身的精力/能力有正确的评估，合理调配自己的精力\n3.减少一些不必要的事情，让自己的精力放在更加有用的事情上",
+      "actual": "1.在做了充足的准备之后上课听英文讲解的难度有一定下降\n2.最近自己关注的事情确实有点多了，导致自己有些忙不过来，需要进行精简",
+      "accuracy": "partial",
+      "deviationNotes": "整体来讲比较准确，但是对具体的事件比如说为什么不适应解得不是特别清楚，讲的依旧比较偏向抽象化",
+      "person": "示例A"
+    },
+    {
+      "question": "在今日是否可以做完活回家躺到周末再去学校",
+      "input": {
+        "question": "在今日是否可以做完活回家躺到周末再去学校",
+        "numbers": [
+          645,
+          728,
+          182
+        ],
+        "contextNote": "645、728、182"
+      },
+      "method": "number3",
+      "hex": {
+        "ben": "风天小畜",
+        "hu": {
+          "upper": "li",
+          "lower": "dui",
+          "name": "火泽睽"
+        },
+        "bian": "风火家人",
+        "movingYao": 2,
+        "ti": "qian",
+        "yong": "xun"
+      },
+      "detail": "1.今天的活要干几天\n2.可以回家但是还有事情需要做\n3.大腿可能被金属器所伤\n4.由于自身原因会引起亲密关系的变化",
+      "actual": "1.活可能干几天\n2.可以回家但是有其他事情做\n3.手指被塑料划伤\n",
+      "accuracy": "partial",
+      "deviationNotes": "有一定偏差，大腿未受伤，手被塑料划伤；当日就回了家并未在工厂干几天",
+      "person": "示例B"
+    },
+    {
+      "question": "求职的过程会顺利吗",
+      "input": {
+        "question": "求职的过程会顺利吗",
+        "numbers": [
+          55,
+          66,
+          78
+        ],
+        "contextNote": "55、66、78"
+      },
+      "method": "number3",
+      "hex": {
+        "ben": "山泽损",
+        "hu": {
+          "upper": "kun",
+          "lower": "zhen",
+          "name": "地雷复"
+        },
+        "bian": "山水蒙",
+        "movingYao": 1,
+        "ti": "dui",
+        "yong": "gen"
+      },
+      "detail": "1.求职的一开始会不太顺利，会接收到公司多次的负面信息/打击\n2.在接受打击需要复盘找到不足的点才能找到转机\n3.做好充足的准备，就能够掌握节奏，按照自身预想的方向前行",
+      "actual": "无较大误差",
+      "accuracy": "partial",
+      "deviationNotes": "无较大误差",
+      "person": "示例A"
+    },
+    {
+      "question": "9.14运势如何",
+      "input": {
+        "question": "9.14运势如何",
+        "numbers": null,
+        "contextNote": "云（风）从南边（离）来"
+      },
+      "method": "direction",
+      "hex": {
+        "ben": "风火家人",
+        "hu": {
+          "upper": "li",
+          "lower": "kan",
+          "name": "火水未济"
+        },
+        "bian": "风天小畜",
+        "movingYao": 2,
+        "ti": "li",
+        "yong": "xun"
+      },
+      "detail": "1.明日琐事居多，较为麻烦\n2.需积蓄力量，看清位置，等待时机\n3.注意西边？",
+      "actual": "西边应当西边之人（床铺）➡️影响睡眠",
+      "accuracy": "yes",
+      "deviationNotes": "琐事应指向内部关系处理方面",
+      "person": "示例A"
+    },
+    {
+      "question": "我是否应当去尝试学生代表",
+      "input": {
+        "question": "我是否应当去尝试学生代表",
+        "numbers": [
+          7,
+          9,
+          15,
+          14
+        ],
+        "contextNote": "7、9、15、14"
+      },
+      "method": "datetime",
+      "hex": {
+        "ben": "山雷颐",
+        "hu": {
+          "upper": "kun",
+          "lower": "kun",
+          "name": "坤为地"
+        },
+        "bian": "山火贲",
+        "movingYao": 3,
+        "ti": "zhen",
+        "yong": "gen"
+      },
+      "detail": "1.不因一时起意就直接参与；如果要参与，需要弄清楚具体工作和内容，同时需要保持守正，为同学利益考虑\n2.若选择做，琐事、人情等会影响其他事情，但是通过间接的方式说不定有奇效\n3.能不做，则不做",
+      "actual": "不参与此项活动，尝试与竞选者接触",
+      "accuracy": "yes",
+      "deviationNotes": null,
+      "person": "示例A"
+    },
+    {
+      "question": "明天治病是否顺利",
+      "input": {
+        "question": "明天治病是否顺利",
+        "numbers": [
+          7,
+          9,
+          15,
+          20
+        ],
+        "contextNote": "东北方医院（艮）+时辰（7、9、15、20）"
+      },
+      "method": "direction",
+      "hex": {
+        "ben": "山火贲",
+        "hu": {
+          "upper": "zhen",
+          "lower": "kan",
+          "name": "雷水解"
+        },
+        "bian": "山雷颐",
+        "movingYao": 3,
+        "ti": "li",
+        "yong": "gen"
+      },
+      "detail": "1.本卦“贲”有表面之意，应切除“表皮样囊肿”，第三爻动为贲如濡如，永贞吉表示听从医生、守规矩即可顺利进行\n2.互卦“解”有解除之意，说明病可以顺利解除，坎为水，表示囊肿内可能为液体\n3.变卦“颐”有颐养之意，说明求卦者需要静养，注意饮食和清洁，若过于着急，容易出事，整体来看为吉象\n4.预计2-4周基本恢复",
+      "actual": "无较大误差",
+      "accuracy": "yes",
+      "deviationNotes": null,
+      "person": "示例B"
+    },
+    {
+      "question": "明天面试是否顺利",
+      "input": {
+        "question": "明天面试是否顺利",
+        "numbers": [
+          26,
+          18,
+          9
+        ],
+        "contextNote": "26、18、9"
+      },
+      "method": "number3",
+      "hex": {
+        "ben": "兑为泽",
+        "hu": {
+          "upper": "xun",
+          "lower": "li",
+          "name": "风火家人"
+        },
+        "bian": "泽天夬",
+        "movingYao": 3,
+        "ti": "dui",
+        "yong": "dui"
+      },
+      "detail": "1.明日面试整体来看比较顺利，有机会\n2.面试官可能比较热情或者提问较多（比较健谈），此时需要注意言辞谨慎，保持真诚，不夸大，不故意迎合，不会也不要装会\n3.明日面试可能更加看中团队配合方向，需要体现能适应和融入团体",
+      "actual": "面试官临时开会将面试延期",
+      "accuracy": "no",
+      "deviationNotes": "面试时间并未面试且后续面试交谈还行但是未通过",
+      "person": "示例A"
+    }
+  ]
+}

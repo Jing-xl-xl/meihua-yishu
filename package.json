@@ -1,0 +1,45 @@
+{
+  "name": "meihua-yishu",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "可成长的 AI 梅花易数应用（本地 Web）",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "test:casting": "vitest run packages/back_end/src/casting",
+    "kb:build": "tsx scripts/kb-build/build.ts",
+    "knowledge:validate": "tsx scripts/validate-knowledge/validate.ts",
+    "test:knowledge": "vitest run packages/back_end/src/knowledge",
+    "test:storage": "vitest run packages/back_end/src/storage",
+    "test:llm": "vitest run packages/back_end/src/llm",
+    "test:interpret": "vitest run packages/back_end/src/interpretation",
+    "test:api": "vitest run packages/back_end/src/api",
+    "test:memory": "vitest run packages/back_end/src/memory",
+    "test:export": "vitest run packages/back_end/src/export",
+    "dev": "npm run dev -w @meihua/front_end",
+    "build": "npm run build -w @meihua/front_end",
+    "dev:all": "concurrently -n api,web \"npm run dev:api\" \"npm run dev\"",
+    "dev:api": "tsx packages/back_end/src/api/main.ts",
+    "test:config": "vitest run packages/back_end/src/config"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "concurrently": "^10.0.6",
+    "eslint": "^10.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "entries": {
+    "寅": {
+      "strong": [
+        "zhen",
+        "xun"
+      ],
+      "weak": [
+        "kun",
+        "gen"
+      ]
+    },
+    "卯": {
+      "strong": [
+        "zhen",
+        "xun"
+      ],
+      "weak": [
+        "kun",
+        "gen"
+      ]
+    },
+    "辰": {
+      "strong": [
+        "kun",
+        "gen"
+      ],
+      "weak": [
+        "kan"
+      ]
+    },
+    "巳": {
+      "strong": [
+        "li"
+      ],
+      "weak": [
+        "qian",
+        "dui"
+      ]
+    },
+    "午": {
+      "strong": [
+        "li"
+      ],
+      "weak": [
+        "qian",
+        "dui"
+      ]
+    },
+    "未": {
+      "strong": [
+        "kun",
+        "gen"
+      ],
+      "weak": [
+        "kan"
+      ]
+    },
+    "申": {
+      "strong": [
+        "qian",
+        "dui"
+      ],
+      "weak": [
+        "zhen",
+        "xun"
+      ]
+    },
+    "酉": {
+      "strong": [
+        "qian",
+        "dui"
+      ],
+      "weak": [
+        "zhen",
+        "xun"
+      ]
+    },
+    "戌": {
+      "strong": [
+        "kun",
+        "gen"
+      ],
+      "weak": [
+        "kan"
+      ]
+    },
+    "亥": {
+      "strong": [
+        "kan"
+      ],
+      "weak": [
+        "li"
+      ]
+    },
+    "子": {
+      "strong": [
+        "kan"
+      ],
+      "weak": [
+        "li"
+      ]
+    },
+    "丑": {
+      "strong": [
+        "kun",
+        "gen"
+      ],
+      "weak": [
+        "kan"
+      ]
+    }
+  }
+}

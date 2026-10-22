@@ -1,0 +1,388 @@
+{
+  "hexagrams": [
+    {
+      "kingwen": 1,
+      "upper": "qian",
+      "lower": "qian",
+      "name": "乾为天"
+    },
+    {
+      "kingwen": 2,
+      "upper": "kun",
+      "lower": "kun",
+      "name": "坤为地"
+    },
+    {
+      "kingwen": 3,
+      "upper": "kan",
+      "lower": "zhen",
+      "name": "水雷屯"
+    },
+    {
+      "kingwen": 4,
+      "upper": "gen",
+      "lower": "kan",
+      "name": "山水蒙"
+    },
+    {
+      "kingwen": 5,
+      "upper": "kan",
+      "lower": "qian",
+      "name": "水天需"
+    },
+    {
+      "kingwen": 6,
+      "upper": "qian",
+      "lower": "kan",
+      "name": "天水讼"
+    },
+    {
+      "kingwen": 7,
+      "upper": "kun",
+      "lower": "kan",
+      "name": "地水师"
+    },
+    {
+      "kingwen": 8,
+      "upper": "kan",
+      "lower": "kun",
+      "name": "水地比"
+    },
+    {
+      "kingwen": 9,
+      "upper": "xun",
+      "lower": "qian",
+      "name": "风天小畜"
+    },
+    {
+      "kingwen": 10,
+      "upper": "qian",
+      "lower": "dui",
+      "name": "天泽履"
+    },
+    {
+      "kingwen": 11,
+      "upper": "kun",
+      "lower": "qian",
+      "name": "地天泰"
+    },
+    {
+      "kingwen": 12,
+      "upper": "qian",
+      "lower": "kun",
+      "name": "天地否"
+    },
+    {
+      "kingwen": 13,
+      "upper": "qian",
+      "lower": "li",
+      "name": "天火同人"
+    },
+    {
+      "kingwen": 14,
+      "upper": "li",
+      "lower": "qian",
+      "name": "火天大有"
+    },
+    {
+      "kingwen": 15,
+      "upper": "kun",
+      "lower": "gen",
+      "name": "地山谦"
+    },
+    {
+      "kingwen": 16,
+      "upper": "zhen",
+      "lower": "kun",
+      "name": "雷地豫"
+    },
+    {
+      "kingwen": 17,
+      "upper": "dui",
+      "lower": "zhen",
+      "name": "泽雷随"
+    },
+    {
+      "kingwen": 18,
+      "upper": "gen",
+      "lower": "xun",
+      "name": "山风蛊"
+    },
+    {
+      "kingwen": 19,
+      "upper": "kun",
+      "lower": "dui",
+      "name": "地泽临"
+    },
+    {
+      "kingwen": 20,
+      "upper": "xun",
+      "lower": "kun",
+      "name": "风地观"
+    },
+    {
+      "kingwen": 21,
+      "upper": "li",
+      "lower": "zhen",
+      "name": "火雷噬嗑"
+    },
+    {
+      "kingwen": 22,
+      "upper": "gen",
+      "lower": "li",
+      "name": "山火贲"
+    },
+    {
+      "kingwen": 23,
+      "upper": "gen",
+      "lower": "kun",
+      "name": "山地剥"
+    },
+    {
+      "kingwen": 24,
+      "upper": "kun",
+      "lower": "zhen",
+      "name": "地雷复"
+    },
+    {
+      "kingwen": 25,
+      "upper": "qian",
+      "lower": "zhen",
+      "name": "天雷无妄"
+    },
+    {
+      "kingwen": 26,
+      "upper": "gen",
+      "lower": "qian",
+      "name": "山天大畜"
+    },
+    {
+      "kingwen": 27,
+      "upper": "gen",
+      "lower": "zhen",
+      "name": "山雷颐"
+    },
+    {
+      "kingwen": 28,
+      "upper": "dui",
+      "lower": "xun",
+      "name": "泽风大过"
+    },
+    {
+      "kingwen": 29,
+      "upper": "kan",
+      "lower": "kan",
+      "name": "坎为水"
+    },
+    {
+      "kingwen": 30,
+      "upper": "li",
+      "lower": "li",
+      "name": "离为火"
+    },
+    {
+      "kingwen": 31,
+      "upper": "dui",
+      "lower": "gen",
+      "name": "泽山咸"
+    },
+    {
+      "kingwen": 32,
+      "upper": "zhen",
+      "lower": "xun",
+      "name": "雷风恒"
+    },
+    {
+      "kingwen": 33,
+      "upper": "qian",
+      "lower": "gen",
+      "name": "天山遁"
+    },
+    {
+      "kingwen": 34,
+      "upper": "zhen",
+      "lower": "qian",
+      "name": "雷天大壮"
+    },
+    {
+      "kingwen": 35,
+      "upper": "li",
+      "lower": "kun",
+      "name": "火地晋"
+    },
+    {
+      "kingwen": 36,
+      "upper": "kun",
+      "lower": "li",
+      "name": "地火明夷"
+    },
+    {
+      "kingwen": 37,
+      "upper": "xun",
+      "lower": "li",
+      "name": "风火家人"
+    },
+    {
+      "kingwen": 38,
+      "upper": "li",
+      "lower": "dui",
+      "name": "火泽睽"
+    },
+    {
+      "kingwen": 39,
+      "upper": "kan",
+      "lower": "gen",
+      "name": "水山蹇"
+    },
+    {
+      "kingwen": 40,
+      "upper": "zhen",
+      "lower": "kan",
+      "name": "雷水解"
+    },
+    {
+      "kingwen": 41,
+      "upper": "gen",
+      "lower": "dui",
+      "name": "山泽损"
+    },
+    {
+      "kingwen": 42,
+      "upper": "xun",
+      "lower": "zhen",
+      "name": "风雷益"
+    },
+    {
+      "kingwen": 43,
+      "upper": "dui",
+      "lower": "qian",
+      "name": "泽天夬"
+    },
+    {
+      "kingwen": 44,
+      "upper": "qian",
+      "lower": "xun",
+      "name": "天风姤"
+    },
+    {
+      "kingwen": 45,
+      "upper": "dui",
+      "lower": "kun",
+      "name": "泽地萃"
+    },
+    {
+      "kingwen": 46,
+      "upper": "kun",
+      "lower": "xun",
+      "name": "地风升"
+    },
+    {
+      "kingwen": 47,
+      "upper": "dui",
+      "lower": "kan",
+      "name": "泽水困"
+    },
+    {
+      "kingwen": 48,
+      "upper": "kan",
+      "lower": "xun",
+      "name": "水风井"
+    },
+    {
+      "kingwen": 49,
+      "upper": "dui",
+      "lower": "li",
+      "name": "泽火革"
+    },
+    {
+      "kingwen": 50,
+      "upper": "li",
+      "lower": "xun",
+      "name": "火风鼎"
+    },
+    {
+      "kingwen": 51,
+      "upper": "zhen",
+      "lower": "zhen",
+      "name": "震为雷"
+    },
+    {
+      "kingwen": 52,
+      "upper": "gen",
+      "lower": "gen",
+      "name": "艮为山"
+    },
+    {
+      "kingwen": 53,
+      "upper": "xun",
+      "lower": "gen",
+      "name": "风山渐"
+    },
+    {
+      "kingwen": 54,
+      "upper": "zhen",
+      "lower": "dui",
+      "name": "雷泽归妹"
+    },
+    {
+      "kingwen": 55,
+      "upper": "zhen",
+      "lower": "li",
+      "name": "雷火丰"
+    },
+    {
+      "kingwen": 56,
+      "upper": "li",
+      "lower": "gen",
+      "name": "火山旅"
+    },
+    {
+      "kingwen": 57,
+      "upper": "xun",
+      "lower": "xun",
+      "name": "巽为风"
+    },
+    {
+      "kingwen": 58,
+      "upper": "dui",
+      "lower": "dui",
+      "name": "兑为泽"
+    },
+    {
+      "kingwen": 59,
+      "upper": "xun",
+      "lower": "kan",
+      "name": "风水涣"
+    },
+    {
+      "kingwen": 60,
+      "upper": "kan",
+      "lower": "dui",
+      "name": "水泽节"
+    },
+    {
+      "kingwen": 61,
+      "upper": "xun",
+      "lower": "dui",
+      "name": "风泽中孚"
+    },
+    {
+      "kingwen": 62,
+      "upper": "zhen",
+      "lower": "gen",
+      "name": "雷山小过"
+    },
+    {
+      "kingwen": 63,
+      "upper": "kan",
+      "lower": "li",
+      "name": "水火既济"
+    },
+    {
+      "kingwen": 64,
+      "upper": "li",
+      "lower": "kan",
+      "name": "火水未济"
+    }
+  ]
+}

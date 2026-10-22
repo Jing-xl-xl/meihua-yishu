@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+data/
+data-dev/
+*.log
+.DS_Store
+
+config.local.json
+**/config.local.json
