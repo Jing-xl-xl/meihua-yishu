@@ -3,13 +3,14 @@ import type {
   StepId,
   StepState,
   TiYongRelation,
+  WangShuaiLevel,
 } from '@meihua/shared';
 import {
   METHOD_POLARITY,
   STEP_TITLES,
-  elementRelation,
   GUA_WUXING,
   GUA_NAME_ZH,
+  relationFromYongTi,
 } from '@meihua/shared';
 
 import type { KnowledgeQuery } from '../knowledge/query';
@@ -50,28 +51,9 @@ export function ruleStep4(
 ): { state: StepState; relation: TiYongRelation } {
   const yongEl = GUA_WUXING[cast.yong];
   const tiEl = GUA_WUXING[cast.ti];
-  // elementRelation(yong, ti)：用对体
-  // sheng=用生体, ke=用克体, bei_sheng=体生用, bei_ke=体克用
-  const relYongTi = elementRelation(yongEl, tiEl);
-  let relation: TiYongRelation;
-  let text: string;
-  if (relYongTi === 'sheng') {
-    relation = 'sheng';
-    text = k.tiyongDuan('sheng');
-  } else if (relYongTi === 'ke') {
-    relation = 'ke';
-    text = k.tiyongDuan('ke');
-  } else if (relYongTi === 'bi_he') {
-    relation = 'bi_he';
-    text = k.tiyongDuan('bi_he');
-  } else if (relYongTi === 'bei_sheng') {
-    relation = 'xie';
-    text = k.tiyongDuan('xie');
-  } else {
-    // bei_ke：体克用
-    relation = 'bei_ke';
-    text = k.tiyongDuan('bei_ke');
-  }
+  // v2 唯一入口：yong_ke=用克体，ti_ke=体克用（规格 §5.1）
+  const relation = relationFromYongTi(yongEl, tiEl);
+  const text = k.tiyongDuan(relation);
   return {
     relation,
     state: {
@@ -83,6 +65,23 @@ export function ruleStep4(
       updatedAt: nowIso(),
     },
   };
+}
+
+/** 体卦旺衰（规格 §5.6）；无节气月=平 */
+export function tiWangShuai(
+  cast: CastResult,
+  k: KnowledgeQuery,
+): WangShuaiLevel {
+  const key = cast.lunar?.jieqiMonthKey;
+  if (!key) return '平';
+  try {
+    const ws = k.wangShuai(key);
+    if (ws.strong.includes(cast.ti)) return '旺';
+    if (ws.weak.includes(cast.ti)) return '衰';
+    return '平';
+  } catch {
+    return '平';
+  }
 }
 
 export function ruleStep5(cast: CastResult, k: KnowledgeQuery): StepState {

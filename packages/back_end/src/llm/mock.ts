@@ -32,6 +32,12 @@ export class MockProvider implements LLMProvider {
     const text =
       this.queue.shift() ??
       '{"conclusion":"ok","reasoningNote":"mock","sources":[]}';
+    // W3：分片触发 onDelta，便于测增量渲染
+    if (req.onDelta && text.length > 0) {
+      const mid = Math.max(1, Math.floor(text.length / 2));
+      req.onDelta(text.slice(0, mid));
+      req.onDelta(text.slice(mid));
+    }
     return {
       text,
       json: tryParseJsonText(text),

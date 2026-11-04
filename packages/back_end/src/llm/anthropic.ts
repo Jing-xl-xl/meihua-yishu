@@ -100,6 +100,11 @@ export function createAnthropic(cfg: AnthropicCfg): LLMProvider {
       if (!text.trim()) {
         throw new LlmError('LLM_EMPTY_RESPONSE', 'empty content');
       }
+      if (req.onDelta && text) {
+        const mid = Math.max(1, Math.floor(text.length / 2));
+        req.onDelta(text.slice(0, mid));
+        req.onDelta(text.slice(mid));
+      }
       return {
         text,
         json: tryParseJsonText(text),

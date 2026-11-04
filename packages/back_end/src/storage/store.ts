@@ -75,12 +75,22 @@ function parseJson<T>(s: string | null): T | undefined {
 }
 
 function personFromRow(r: PersonRow): Person {
+  const x = r as {
+    role_card?: string | null;
+    persona?: string | null;
+    tone?: string | null;
+  };
   return {
     id: r.id,
     name: r.name,
     createdAt: r.created_at,
     profileCard: r.profile_card ?? undefined,
-    roleCard: (r as { role_card?: string | null }).role_card ?? undefined,
+    roleCard: x.role_card ?? undefined,
+    persona:
+      x.persona === 'xiansheng' || x.persona === 'feiyu'
+        ? x.persona
+        : undefined,
+    tone: (x.tone as Person['tone']) ?? undefined,
   };
 }
 
@@ -173,6 +183,22 @@ export function createStore(db: Db) {
 
     renamePerson(id: string, name: string): void {
       db.prepare('UPDATE persons SET name = ? WHERE id = ?').run(name, id);
+    },
+
+    /** 说话方式：persona + tone（规格 §12.1） */
+    setPersonSpeaking(
+      id: string,
+      patch: { persona?: Person['persona']; tone?: Person['tone'] },
+    ): void {
+      const cur = this.getPerson(id);
+      if (!cur) throw new PersonNotFoundError(id);
+      const persona = patch.persona === undefined ? cur.persona : patch.persona;
+      const tone = patch.tone === undefined ? cur.tone : patch.tone;
+      db.prepare('UPDATE persons SET persona = ?, tone = ? WHERE id = ?').run(
+        persona ?? null,
+        tone ?? null,
+        id,
+      );
     },
 
     setPersonProfile(id: string, profileCard: string): void {
@@ -367,6 +393,17 @@ export function createStore(db: Db) {
         )
         .all(personId) as CaseRow[];
       return rows.map(caseFromRow);
+    },
+
+    /** 完成求卦数：caseId 去重且有 verdict（规格 §6.3） */
+    countCompletedCases(personId: string): number {
+      const r = db
+        .prepare(
+          `SELECT COUNT(DISTINCT id) AS n FROM cases
+           WHERE person_id = ? AND verdict_json IS NOT NULL AND verdict_json != ''`,
+        )
+        .get(personId) as { n: number };
+      return r?.n ?? 0;
     },
 
     updateCaseCast(

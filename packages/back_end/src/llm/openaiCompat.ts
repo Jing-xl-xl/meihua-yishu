@@ -76,6 +76,9 @@ export function createOpenAiCompat(cfg: OpenAiCfg): LLMProvider {
       if (req.jsonSchema) {
         body.response_format = { type: 'json_object' };
       }
+      if (req.onDelta) {
+        body.stream = true;
+      }
 
       const timeoutSignal = AbortSignal.timeout(timeoutMs);
       const signal = req.signal
@@ -104,11 +107,49 @@ export function createOpenAiCompat(cfg: OpenAiCfg): LLMProvider {
         throw new LlmError('LLM_UNAVAILABLE', 'network unavailable');
       }
 
-      const bodyText = await res.text();
       if (!res.ok) {
+        const bodyText = await res.text();
         await mapHttpError(res, bodyText);
       }
 
+      // W3 真流式（onDelta）
+      if (req.onDelta && res.body) {
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let text = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() ?? '';
+          for (const line of lines) {
+            const s = line.trim();
+            if (!s.startsWith('data:')) continue;
+            const payload = s.slice(5).trim();
+            if (payload === '[DONE]') continue;
+            try {
+              const j = JSON.parse(payload) as {
+                choices?: { delta?: { content?: string } }[];
+              };
+              const d = j.choices?.[0]?.delta?.content ?? '';
+              if (d) {
+                text += d;
+                req.onDelta(d);
+              }
+            } catch {
+              /* ignore partial json */
+            }
+          }
+        }
+        if (!text.trim()) {
+          throw new LlmError('LLM_EMPTY_RESPONSE', 'empty content');
+        }
+        return { text, json: tryParseJsonText(text), model: cfg.model };
+      }
+
+      const bodyText = await res.text();
       let parsed: {
         model?: string;
         choices?: { message?: { content?: string } }[];

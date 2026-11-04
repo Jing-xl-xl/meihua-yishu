@@ -1,8 +1,12 @@
 import type { Element, Gua, MovingYaoPosition } from '../types/base';
 import { GUA_WUXING } from '../constants/gua';
 import { elementRelation, type ElementRelation } from './wuxing';
+import {
+  relationFromYongTi,
+  type TiYongRelationV2,
+} from './tiYongRelation';
 
-export type QiRelation = 'sheng' | 'ke' | 'bi_he' | 'xie' | 'bei_ke';
+export type QiRelation = TiYongRelationV2;
 export type QiFlow = 'yong_to_ti' | 'ti_to_yong' | 'equal';
 
 export type QiSegment = {
@@ -49,25 +53,26 @@ const RELATION_META: Record<
   { label: string; plain: string; flow: QiFlow }
 > = {
   sheng: { label: '用生体', plain: '得助力', flow: 'yong_to_ti' },
-  ke: { label: '用克体', plain: '被外压', flow: 'yong_to_ti' },
+  yong_ke: { label: '用克体', plain: '被外压', flow: 'yong_to_ti' },
   bi_he: { label: '比和', plain: '相合', flow: 'equal' },
   xie: { label: '体生用', plain: '耗散', flow: 'ti_to_yong' },
-  bei_ke: { label: '体克用', plain: '我主导', flow: 'ti_to_yong' },
+  ti_ke: { label: '体克用', plain: '我主导', flow: 'ti_to_yong' },
 };
 
+/** 兼容：raw elementRelation → v2（业务请用 relationFromYongTi） */
 export function mapRelation(raw: ElementRelation): QiRelation {
   switch (raw) {
     case 'sheng':
       return 'sheng';
     case 'ke':
-      return 'ke';
+      return 'yong_ke';
     case 'bi_he':
       return 'bi_he';
     case 'bei_sheng':
       return 'xie';
     case 'bei_ke':
     default:
-      return 'bei_ke';
+      return 'ti_ke';
   }
 }
 
@@ -79,7 +84,7 @@ export function qiSegment(
   const tiEl = GUA_WUXING[ti];
   const yongEl = GUA_WUXING[yong];
   const raw = elementRelation(yongEl, tiEl);
-  const relation = mapRelation(raw);
+  const relation = relationFromYongTi(yongEl, tiEl);
   const meta = RELATION_META[relation];
   return {
     stage,

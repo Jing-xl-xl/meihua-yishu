@@ -28,7 +28,12 @@ function isAllowedBaseUrl(url: string): boolean {
   }
 }
 import { writeAnchor, writePreference, writeResult, writeRound } from '../memory/write';
-import { updateProfileCard } from '../memory/profile';
+import {
+  updateProfileCard,
+  refreshProfileCard,
+  parseProfileCard,
+  PROFILE_THRESHOLD,
+} from '../memory/profile';
 import {
   buildPersonMemoryPrompt,
   DEFAULT_ROLE_CARD,
@@ -68,12 +73,42 @@ export function createApp(deps: AppDeps): FastifyInstance {
 
   app.patch('/api/persons/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const body = parseOr400(z.object({ name: z.string().min(1) }), req.body);
-    if (!deps.store.getPerson(id)) {
+    const body = parseOr400(
+      z
+        .object({
+          name: z.string().min(1).optional(),
+          persona: z.enum(['feiyu', 'xiansheng']).optional(),
+          tone: z.enum(['standard', 'brief', 'warm', 'elegant']).optional(),
+        })
+        .refine(
+          (b) =>
+            b.name !== undefined ||
+            b.persona !== undefined ||
+            b.tone !== undefined,
+          { message: 'need at least one of name/persona/tone' },
+        ),
+      req.body ?? {},
+    );
+    const cur = deps.store.getPerson(id);
+    if (!cur) {
       throw new AppError('PERSON_NOT_FOUND', id);
     }
-    deps.store.renamePerson(id, body.name);
-    return { ok: true };
+    const nextPersona = body.persona ?? cur.persona;
+    const nextTone = body.tone ?? cur.tone;
+    if (nextPersona === 'feiyu' && nextTone === 'elegant') {
+      throw new AppError(
+        'INVALID_REQUEST',
+        '大肥鱼不支持「清雅半文」语气',
+      );
+    }
+    if (body.name) deps.store.renamePerson(id, body.name);
+    if (body.persona !== undefined || body.tone !== undefined) {
+      deps.store.setPersonSpeaking(id, {
+        persona: body.persona,
+        tone: body.tone,
+      });
+    }
+    return { ok: true, person: deps.store.getPerson(id) };
   });
 
   app.delete('/api/persons/:id', async (req) => {
@@ -372,6 +407,20 @@ export function createApp(deps: AppDeps): FastifyInstance {
     }
   }
 
+  function speakingOf(
+    store: { getPerson(id: string): { persona?: string; tone?: string } | null },
+    personId: string,
+  ): { persona?: 'feiyu' | 'xiansheng'; tone?: string } {
+    const p = store.getPerson(personId);
+    return {
+      persona:
+        p?.persona === 'xiansheng' || p?.persona === 'feiyu'
+          ? p.persona
+          : undefined,
+      tone: p?.tone,
+    };
+  }
+
   function requireCast(id: string) {
     const bundle = deps.store.getCaseBundle(id);
     if (!bundle) throw new AppError('INVALID_REQUEST', 'case not found');
@@ -415,6 +464,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
         emit: emitFromStore(emit),
         fromStep: body.fromStep,
         memoryPrompt,
+        ...speakingOf(deps.store, bundle.case.personId),
       });
       if (result.done && result.verdict) {
         const m = writeRound(deps.store, {
@@ -432,6 +482,12 @@ export function createApp(deps: AppDeps): FastifyInstance {
           caseId: id,
           data: { memoryIds: [m.id] },
         });
+        void refreshProfileCard({
+          store: deps.store,
+          personId: bundle.case.personId,
+          llm: deps.llm,
+          offline: deps.config.offline,
+        }).catch(() => undefined);
       }
     });
   });
@@ -471,6 +527,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
         emit: emitFromStore(emit),
         answers: body.answers,
         memoryPrompt,
+        ...speakingOf(deps.store, bundle.case.personId),
       });
     });
   });
@@ -506,11 +563,12 @@ export function createApp(deps: AppDeps): FastifyInstance {
         stepId: body.stepId as never,
         message: body.message,
         memoryPrompt,
+        ...speakingOf(deps.store, bundle.case.personId),
       });
     });
   });
 
-  app.post('/api/cases/:id/followup', async (req) => {
+  app.post('/api/cases/:id/followup', async (req, res) => {
     const { id } = req.params as { id: string };
     const bundle = requireCast(id);
     const body = parseOr400(
@@ -525,28 +583,36 @@ export function createApp(deps: AppDeps): FastifyInstance {
       category: bundle.case.input.category,
       guaName: bundle.case.cast?.ben?.name,
     });
-    const r = await deps.interpret.followUp({
-      case: bundle.case,
-      cast: bundle.case.cast,
-      steps: bundle.steps,
-      question: body.question,
-      knowledge: deps.knowledge,
-      llm: deps.llm,
-      memoryPrompt,
+    await runSse(req as never, res as never, async (emit) => {
+      const r = await deps.interpret.followUp({
+        case: bundle.case,
+        cast: bundle.case.cast,
+        steps: bundle.steps,
+        question: body.question,
+        knowledge: deps.knowledge,
+        llm: deps.llm,
+        memoryPrompt,
+        ...speakingOf(deps.store, bundle.case.personId),
+        emit: emitFromStore(emit),
+      });
+      deps.store.appendMessage({
+        sessionId: bundle.case.sessionId,
+        caseId: id,
+        role: 'user',
+        content: body.question,
+      });
+      deps.store.appendMessage({
+        sessionId: bundle.case.sessionId,
+        caseId: id,
+        role: 'assistant',
+        content: r.text,
+      });
+      emit({
+        type: 'done',
+        caseId: id,
+        data: { caseId: id, sessionId: bundle.case.sessionId },
+      });
     });
-    deps.store.appendMessage({
-      sessionId: bundle.case.sessionId,
-      caseId: id,
-      role: 'user',
-      content: body.question,
-    });
-    deps.store.appendMessage({
-      sessionId: bundle.case.sessionId,
-      caseId: id,
-      role: 'assistant',
-      content: r.text,
-    });
-    return r;
   });
 
   app.post('/api/cases/:id/feedback', async (req) => {
@@ -767,6 +833,38 @@ export function createApp(deps: AppDeps): FastifyInstance {
     return r;
   });
 
+  app.post('/api/memory/profile/refresh', async (req) => {
+    const body = parseOr400(
+      z.object({ personId: z.string().min(1) }),
+      req.body,
+    );
+    const n = deps.store.countCompletedCases(body.personId);
+    if (n < PROFILE_THRESHOLD) {
+      return {
+        ok: false,
+        caseCount: n,
+        threshold: PROFILE_THRESHOLD,
+        message: `求卦满 ${PROFILE_THRESHOLD} 次后生成画像（当前 ${n}）`,
+      };
+    }
+    const card = await refreshProfileCard({
+      store: deps.store,
+      personId: body.personId,
+      llm: deps.llm,
+      offline: deps.config.offline,
+      force: true,
+    });
+    return {
+      ok: true,
+      caseCount: n,
+      threshold: PROFILE_THRESHOLD,
+      profile: parseProfileCard(
+        deps.store.getPerson(body.personId)?.profileCard,
+      ),
+      generated: card,
+    };
+  });
+
   app.post('/api/memory/:id/reject', async (req) => {
     const { id } = req.params as { id: string };
     const current = deps.store.getMemory(id);
@@ -786,6 +884,19 @@ export function createApp(deps: AppDeps): FastifyInstance {
       req.query,
     );
     return deps.knowledge.hexagram(q.id);
+  });
+
+  app.get('/api/knowledge/liuxiang', async (req) => {
+    const q = (req.query ?? {}) as { gua?: string };
+    const ids = ['qian', 'dui', 'li', 'zhen', 'xun', 'kan', 'gen', 'kun'] as const;
+    if (q.gua && (ids as readonly string[]).includes(q.gua)) {
+      return { gua: q.gua, bag: deps.knowledge.liuXiang(q.gua as never) };
+    }
+    const all: Record<string, Record<string, string[]>> = {};
+    for (const id of ids) {
+      all[id] = deps.knowledge.liuXiang(id);
+    }
+    return { gua: all };
   });
 
   // ── export ──────────────────────────────

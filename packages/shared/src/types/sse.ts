@@ -37,6 +37,18 @@ export type SSEEvent =
       };
     }
   | {
+      /** W3：追问等散文增量 */
+      type: 'message_delta';
+      caseId: string;
+      data: { text: string; channel?: 'followup' | 'other' };
+    }
+  | {
+      /** W3：占断 summary / 诗 增量 */
+      type: 'verdict_delta';
+      caseId: string;
+      data: { field: 'summary' | 'poem'; text: string; append?: boolean };
+    }
+  | {
       type: 'step_sources';
       caseId: string;
       data: { stepId: StepId; sources: SourceRef[] };

@@ -52,7 +52,7 @@ describe('write + tags', () => {
     expect(tags).toContain('面试');
   });
 
-  it('writeResult + profile', () => {
+  it('writeResult + profile threshold', () => {
     const { store, personId, sessionId, caseId } = setup();
     writeResult(store, {
       personId,
@@ -63,8 +63,9 @@ describe('write + tags', () => {
       deviationSteps: [7],
     });
     const card = updateProfileCard(store, personId);
-    expect(card.length).toBeGreaterThan(0);
-    expect(store.getPerson(personId)?.profileCard).toBe(card);
+    expect(card).toContain('求卦满');
+    // 未达门槛不写库
+    expect(store.getPerson(personId)?.profileCard ?? null).toBeNull();
   });
 });
 

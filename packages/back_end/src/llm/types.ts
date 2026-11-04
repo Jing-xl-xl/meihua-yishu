@@ -21,6 +21,8 @@ export type StreamChatRequest = {
   /** 覆盖 cfg.timeoutMs，默认 60000 */
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** 显示层增量（W3）；最终仍以返回 text 为准 */
+  onDelta?: (text: string) => void;
 };
 
 export type LLMProvider = {

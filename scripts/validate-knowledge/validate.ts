@@ -101,6 +101,35 @@ const sb = readJson('structured/shibazhan.json') as {
 } | null;
 if ((sb?.categories?.length ?? 0) < 18) err('shibazhan need 18 categories');
 
+// W7 类象全表
+const lxPath = join(OUT, 'graph/liuxiang.json');
+if (!existsSync(lxPath)) {
+  err('graph/liuxiang.json missing (run kb:build)');
+} else {
+  const lx = readJson('graph/liuxiang.json') as {
+    gua?: Record<string, Record<string, string[]>>;
+  } | null;
+  const guaMap = lx?.gua ?? {};
+  const ids = ['qian', 'dui', 'li', 'zhen', 'xun', 'kan', 'gen', 'kun'];
+  const core = ['天时', '地理', '人物', '身体', '静物'];
+  const optional = ['动物'];
+  for (const id of ids) {
+    const bag = guaMap[id];
+    if (!bag) {
+      err(`liuxiang missing gua ${id}`);
+      continue;
+    }
+    for (const c of core) {
+      if (!bag[c]?.length) err(`liuxiang ${id} core empty: ${c}`);
+    }
+    for (const c of optional) {
+      if (!bag[c]?.length) console.warn(`warn: liuxiang ${id} optional empty: ${c}`);
+    }
+    const words = Object.values(bag).reduce((n, a) => n + a.length, 0);
+    if (words < 30) err(`liuxiang ${id} too few words: ${words}`);
+  }
+}
+
 if (existsSync(join(OUT, 'graph/wuxing.json'))) {
   err('graph/wuxing.json should not exist (use shared)');
 }

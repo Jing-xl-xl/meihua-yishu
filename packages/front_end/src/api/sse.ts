@@ -28,13 +28,16 @@ export function parseFrame(buffer: string): {
         parsed = data;
       }
     }
-    // V1：忽略 step_delta 等未知
+    // W3：解析 delta；未知事件仍忽略
     const known = new Set([
       'route',
       'cast',
       'step_start',
       'step_done',
       'step_revised',
+      'step_delta',
+      'message_delta',
+      'verdict_delta',
       'need_input',
       'verdict',
       'memory_written',
@@ -59,6 +62,38 @@ export async function streamSse(
     body: JSON.stringify(body ?? {}),
     signal,
   });
+  const ctype = res.headers.get('content-type') ?? '';
+  // 非 SSE：JSON 整包 / 错误体（W3 §8.6）
+  if (!ctype.includes('text/event-stream')) {
+    const text = await res.text();
+    if (!res.ok) {
+      let msg = text.slice(0, 200);
+      try {
+        const j = JSON.parse(text) as { message?: string; error?: string };
+        msg = j.message || j.error || msg;
+      } catch {
+        /* keep raw */
+      }
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    try {
+      const j = JSON.parse(text) as {
+        text?: string;
+        message?: string;
+        data?: { text?: string };
+      };
+      const payload = j.text ?? j.data?.text;
+      if (payload) {
+        onFrame({
+          event: 'message_delta',
+          data: { text: payload, channel: 'followup' },
+        });
+      }
+    } catch {
+      /* ignore non-json */
+    }
+    return;
+  }
   if (!res.body) return;
   const reader = res.body.getReader();
   const dec = new TextDecoder();

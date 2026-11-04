@@ -11,12 +11,18 @@ describe('parseFrame', () => {
     expect(rest).toBe('');
   });
 
-  it('skips heartbeat and unknown (step_delta)', () => {
+  it('parses delta events (W3)', () => {
     const buf = [
       ': ping',
       '',
       'event: step_delta',
-      'data: {"x":1}',
+      'data: {"text":"a"}',
+      '',
+      'event: message_delta',
+      'data: {"text":"hi"}',
+      '',
+      'event: verdict_delta',
+      'data: {"field":"summary","text":"x"}',
       '',
       'event: step_done',
       'data: {"stepId":1}',
@@ -24,8 +30,12 @@ describe('parseFrame', () => {
       '',
     ].join('\n');
     const { frames } = parseFrame(buf);
-    expect(frames).toHaveLength(1);
-    expect(frames[0]!.event).toBe('step_done');
+    expect(frames.map((f) => f.event)).toEqual([
+      'step_delta',
+      'message_delta',
+      'verdict_delta',
+      'step_done',
+    ]);
   });
 
   it('partial buffer stays in rest', () => {

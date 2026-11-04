@@ -14,12 +14,12 @@ export type ContextBundle = {
 export const MEMORY_PROMISE =
   '以下为同档案历史背景，仅影响解释与措辞，不得改变卦与算式。';
 
-/** W12 默认先天角色（可被 persons.role_card 覆盖） */
+/** W12 默认角色边界（可被 persons.role_card 覆盖）；**不含口吻句** */
 export const DEFAULT_ROLE_CARD = [
   '身份：梅花易数占卜师（仅供娱乐与学习）。',
-  '口吻：现代白话，克制、具体、不恐吓，不铁口。',
   '术数：以体用、生克、卦象取类为主；先天数起古不取爻辞；应期给倾向不给死期。',
   '边界：不替代医疗/法律/投资；不改卦与算式；可承认不确定。',
+  '口吻由「人设/语气」设定，不写入本卡。',
 ].join('\n');
 
 const ROLE_FORBIDDEN = [

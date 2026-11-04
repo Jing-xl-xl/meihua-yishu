@@ -7,8 +7,12 @@ export type Person = {
   name: string;
   createdAt: string;
   profileCard?: string;
-  /** W12 先天角色稿 */
+  /** W12 先天角色稿（边界/术数；不含口吻句） */
   roleCard?: string;
+  /** 解卦人设（规格 §7.0）；默认 feiyu */
+  persona?: 'feiyu' | 'xiansheng';
+  /** 语气（规格 §1.5） */
+  tone?: 'standard' | 'brief' | 'warm' | 'elegant';
 };
 
 /** 案例输入快照（一会话一案例；Message 支持追问） */

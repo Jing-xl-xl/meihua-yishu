@@ -22,14 +22,27 @@ export const STATUS_LABEL: Record<string, string> = {
   need_key: '需配置 Key',
 };
 
-/** 枚举 → 显示；禁止恐吓词（对齐 W4） */
+/** 枚举 → 签头/badge；与 SignBoard 单源（规格 v2 §5.3） */
 export const GRADE_LABEL: Record<string, string> = {
-  great: '上吉',
+  great: '大吉',
   good: '吉',
   neutral: '平',
-  bad: '凶 · 宜守',
-  terrible: '不利 · 宜慎',
+  bad: '凶',
+  terrible: '大凶',
 };
+
+/** 动爻 1–6 → 签面汉字序数 */
+export const YAO_ZH = ['一', '二', '三', '四', '五', '六'] as const;
+
+export function yaoZh(pos: number | undefined): string {
+  if (pos == null || pos < 1 || pos > 6) return '';
+  return YAO_ZH[pos - 1] ?? '';
+}
+
+export function movingYaoLabel(pos: number | undefined): string {
+  const z = yaoZh(pos);
+  return z ? `动${z}` : '';
+}
 
 export function gradeLabel(g: string | undefined): string {
   return GRADE_LABEL[g ?? ''] ?? g ?? '平';
@@ -37,6 +50,13 @@ export function gradeLabel(g: string | undefined): string {
 
 export function gradeClass(g: string | undefined): string {
   return `grade-badge grade-${g ?? 'neutral'}`;
+}
+
+/** 问题摘要：≤20 字，超出加省略号（规格 §3.9） */
+export function questionBrief(q: string | undefined, max = 20): string {
+  const t = (q ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  return t.length <= max ? t : `${t.slice(0, max)}…`;
 }
 
 export function isYangLine(v: number): boolean {

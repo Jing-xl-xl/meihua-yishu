@@ -12,9 +12,20 @@ import {
   ruleStep5,
   ruleStep6Houtian,
   ruleStep6Skip,
+  tiWangShuai,
 } from './rules';
-import { composeVerdict } from './verdict';
+import { composeVerdict, enrichVerdictCopy } from './verdict';
+import { attachSignPoem } from './poem';
+import { validateCopy } from './copyCheck';
 import { truncateReasoning, plainText, cleanAssistantText, PARAMS, STEP_KNOWLEDGE_MAP } from './prompts/common';
+import {
+  buildLiuXiangExcerpt,
+  isLiuXiangEmpty,
+} from './liuxiangBrief';
+import {
+  buildPersonaSystem,
+  type PersonaId,
+} from './prompts/persona';
 import {
   STEP2_SYSTEM,
   STEP3_SYSTEM,
@@ -44,6 +55,7 @@ async function llmStep(
   deps: RunDeps,
   system: string,
   user: string,
+  onDelta?: (text: string) => void,
 ): Promise<JsonStepOut> {
   let lastErr: unknown;
   let echo = '';
@@ -56,6 +68,7 @@ async function llmStep(
         ],
         temperature: PARAMS.step.temperature,
         maxTokens: PARAMS.step.maxTokens,
+        onDelta,
       });
       const json = r.json ?? tryParseJsonText(r.text);
       if (json && typeof json === 'object') {
@@ -112,6 +125,64 @@ function markFailed(stepId: StepId, reason: string): StepState {
   };
 }
 
+/** verdict 定稿后：占断人话化 + 后台实时写签诗 */
+async function withSignPoem(
+  verdict: Awaited<ReturnType<typeof composeVerdict>>,
+  opts: {
+    case: { id: string; input: { question?: string } };
+    cast: import('@meihua/shared').CastResult;
+    llm: import('../llm/types').LLMProvider;
+    offline?: boolean;
+    emit?: import('./types').Emit;
+  },
+  steps: StepState[],
+) {
+  const persona = (opts as { persona?: PersonaId }).persona ?? 'feiyu';
+  const enriched = await enrichVerdictCopy({
+    verdict,
+    llm: opts.llm,
+    offline: opts.offline,
+    persona,
+    question: opts.case.input.question ?? '',
+    stepConclusions: steps
+      .filter((s) => s.conclusion)
+      .map((s) => s.conclusion),
+    onSummaryDelta: (t) => {
+      opts.emit?.({
+        type: 'verdict_delta',
+        caseId: opts.case.id,
+        data: { field: 'summary', text: t, append: true },
+      });
+    },
+  });
+  return attachSignPoem(enriched, {
+    llm: opts.llm,
+    offline: opts.offline,
+    question: opts.case.input.question ?? '',
+    benName: opts.cast.ben.name,
+    movingYao: opts.cast.movingYao,
+    tiYongNote: opts.cast.tiYongNote,
+    gradeLabel: verdict.grade,
+    persona,
+    onPoemLine: (kind, text) => {
+      opts.emit?.({
+        type: 'verdict_delta',
+        caseId: opts.case.id,
+        data: {
+          field: 'poem',
+          text: JSON.stringify({ line: kind, text }),
+          append: true,
+        },
+      });
+    },
+    stepBrief: steps
+      .filter((s) => s.conclusion)
+      .slice(-3)
+      .map((s) => s.conclusion)
+      .join('；'),
+  });
+}
+
 async function runOneStep(
   stepId: StepId,
   ctx: StepContext,
@@ -136,12 +207,24 @@ async function runOneStep(
   }
 
   const knowledgeLine = STEP_KNOWLEDGE_MAP[stepId] ?? '';
+  const liuxiangBlock =
+    stepId === 7
+      ? buildLiuXiangExcerpt({
+          ti: cast.ti,
+          yong: cast.yong,
+          tiBag: k.liuXiang(cast.ti as never),
+          yongBag: k.liuXiang(cast.yong as never),
+          category: ctx.category,
+          question: ctx.case.input.question,
+        })
+      : '';
   const userPrompt = [
     `问题：${ctx.case.input.question}`,
     `占类：${ctx.category ?? '未定'}`,
     `本卦：${cast.ben.name}；变：${cast.bian.name}；动爻：${cast.movingYao}`,
     `体用：${cast.tiYongNote}`,
     `【知识依据】${knowledgeLine}`,
+    ...(liuxiangBlock ? [liuxiangBlock] : []),
     `卦辞摘要：${k.guaCi(cast.ben.kingwen).slice(0, 80)}`,
     ...ctx.prior.map((p) => `步骤${p.stepId}：${p.conclusion}`),
     ...(ctx.backgroundNotes.length
@@ -152,6 +235,8 @@ async function runOneStep(
       : []),
   ].join('\n');
 
+  const persona: PersonaId =
+    (deps as { persona?: PersonaId }).persona ?? 'feiyu';
   const systems: Record<number, string> = {
     2: STEP2_SYSTEM,
     3: STEP3_SYSTEM,
@@ -164,10 +249,34 @@ async function runOneStep(
   };
 
   try {
+    let stepDelta = '';
+    let stepDeltaShown = 0;
     const out = await llmStep(
       deps,
-      (systems[stepId] ?? STEP7_SYSTEM) + '\n' + REFUSAL_SOFTENER,
+      [
+        buildPersonaSystem({ persona, tone: (deps as { tone?: string }).tone }),
+        systems[stepId] ?? STEP7_SYSTEM,
+        REFUSAL_SOFTENER,
+      ].join('\n'),
       userPrompt,
+      (chunk) => {
+        stepDelta += chunk;
+        // P1：只流 conclusion 可见增量（粗提取）
+        const m = stepDelta.match(/"conclusion"\s*:\s*"([^"]*)/);
+        const visible = m?.[1] ?? '';
+        if (visible) {
+          deps.emit?.({
+            type: 'step_delta',
+            caseId: ctx.case.id,
+            data: {
+              stepId,
+              field: 'conclusion',
+              text: visible.slice(stepDeltaShown),
+            },
+          });
+          stepDeltaShown = visible.length;
+        }
+      },
     );
     const state: StepState = {
       stepId,
@@ -178,11 +287,17 @@ async function runOneStep(
       reasoningNote: truncateReasoning(plainText(String(out.reasoningNote ?? ''))),
       updatedAt: new Date().toISOString(),
     };
-    // D-2 降级标注
+    // P0 机检：主结论硬 tell → 降级为原句截断提示（完整重写留给占断层）
+    const copy = validateCopy(state.conclusion, { where: `step${stepId}` });
+    if (!copy.ok) {
+      const note = copy.hits.map((h) => h.token).join('/');
+      state.reasoningNote = truncateReasoning(
+        `${state.reasoningNote ?? ''}（文案提示：${note}）`.trim(),
+      );
+    }
+    // D-2 降级标注（W7：缺文件返回空 bag）
     if (stepId === 7) {
-      try {
-        k.liuXiang(cast.ti);
-      } catch {
+      if (isLiuXiangEmpty(k.liuXiang(cast.ti as never))) {
         state.conclusion += '（类目库待补）';
       }
     }
@@ -371,7 +486,9 @@ export async function runInterpret(
     };
 
     let asked = 0;
-    let relation: TiYongRelation | undefined;
+    // 规格 §5.5：revise 从 n>4 起跑也必须补算 relation
+    let relation: TiYongRelation = ruleStep4(opts.cast, opts.knowledge).relation;
+    const wang = tiWangShuai(opts.cast, opts.knowledge);
 
     for (const id of STEP_IDS) {
       if (id < from) continue;
@@ -402,6 +519,7 @@ export async function runInterpret(
           const verdict = composeVerdict({
             steps: partial,
             relation,
+            wangShuai: wang,
             category: ctx.category,
           });
           return { steps: partial, verdict, done: false };
@@ -416,11 +534,16 @@ export async function runInterpret(
     }
 
     const steps = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
-    const verdict = composeVerdict({
+    const verdict = await withSignPoem(
+      composeVerdict({
+        steps,
+        relation,
+        wangShuai: wang,
+        category: ctx.category,
+      }),
+      opts,
       steps,
-      relation,
-      category: ctx.category,
-    });
+    );
     opts.store.updateCaseVerdict(caseId, verdict);
     opts.emit({ type: 'verdict', caseId, data: verdict });
     opts.emit({ type: 'done', caseId, data: { caseId, sessionId: opts.case.sessionId } });
@@ -466,7 +589,9 @@ export async function resumeInterpret(
       category: opts.case.input.category,
       step6Skipped: isXiantian(opts.cast.method),
     };
-    let relation: TiYongRelation | undefined;
+    // 规格 §5.5：revise 从 n>4 起跑也必须补算 relation
+    let relation: TiYongRelation = ruleStep4(opts.cast, opts.knowledge).relation;
+    const wang = tiWangShuai(opts.cast, opts.knowledge);
 
     for (const id of STEP_IDS) {
       if (id < from) continue;
@@ -479,11 +604,16 @@ export async function resumeInterpret(
       }
     }
     const steps = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
-    const verdict = composeVerdict({
+    const verdict = await withSignPoem(
+      composeVerdict({
+        steps,
+        relation,
+        wangShuai: wang,
+        category: ctx.category,
+      }),
+      opts,
       steps,
-      relation,
-      category: ctx.category,
-    });
+    );
     opts.store.updateCaseVerdict(caseId, verdict);
     opts.emit({ type: 'verdict', caseId, data: verdict });
     opts.emit({ type: 'done', caseId, data: { caseId, sessionId: opts.case.sessionId } });
@@ -520,7 +650,9 @@ export async function reviseInterpret(
       category: opts.case.input.category,
       step6Skipped: isXiantian(opts.cast.method),
     };
-    let relation: TiYongRelation | undefined;
+    // 规格 §5.5：revise 从 n>4 起跑也必须补算 relation
+    let relation: TiYongRelation = ruleStep4(opts.cast, opts.knowledge).relation;
+    const wang = tiWangShuai(opts.cast, opts.knowledge);
 
     for (const id of STEP_IDS) {
       if (id < opts.stepId) continue;
@@ -534,11 +666,16 @@ export async function reviseInterpret(
       }
     }
     const steps = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
-    const verdict = composeVerdict({
+    const verdict = await withSignPoem(
+      composeVerdict({
+        steps,
+        relation,
+        wangShuai: wang,
+        category: ctx.category,
+      }),
+      opts,
       steps,
-      relation,
-      category: ctx.category,
-    });
+    );
     opts.store.updateCaseVerdict(caseId, verdict);
     opts.emit({ type: 'verdict', caseId, data: verdict });
     opts.emit({ type: 'done', caseId, data: { caseId, sessionId: opts.case.sessionId } });
@@ -557,27 +694,50 @@ export async function answerFollowUp(opts: {
   llm: import('../llm/types').LLMProvider;
   offline?: boolean;
   memoryPrompt?: string;
+  persona?: PersonaId;
   emit?: import('./types').Emit;
 }): Promise<{ text: string }> {
   if (opts.offline) {
     throw new AppError('NO_API_KEY', 'follow-up requires api key');
   }
   try {
+    const caseId = opts.case.id;
     const user = [
       `问题：${opts.question}`,
-      `本卦：${opts.cast.ben.name}之${opts.cast.bian.name}，动${opts.cast.movingYao}`,
+      `本卦：${opts.cast.ben.name}之${opts.cast.bian?.name ?? ''}，动${opts.cast.movingYao}`,
       opts.memoryPrompt ?? '',
     ]
       .filter(Boolean)
       .join('\n');
+    let deltas = 0;
     const r = await opts.llm.streamChat({
-      system: '同一卦补充解读，不重起卦。只用纯文本，禁止 Markdown 符号。',
+      system: [
+        buildPersonaSystem({ persona: opts.persona }),
+        '同一卦补充解读，不重起卦。只用纯文本，禁止 Markdown 符号。',
+      ].join('\n'),
       messages: [{ role: 'user', content: user }],
+      onDelta: (t) => {
+        deltas += 1;
+        opts.emit?.({
+          type: 'message_delta',
+          caseId,
+          data: { text: t, channel: 'followup' },
+        });
+      },
     });
+    // §8.6：未流式时补发全文，防前端静默无回复
+    if (deltas === 0 && r.text) {
+      opts.emit?.({
+        type: 'message_delta',
+        caseId,
+        data: { text: r.text, channel: 'followup' },
+      });
+    }
     return { text: r.text };
   } catch (e) {
     if (isKeyError(e)) throw e;
-    throw new AppError('STEP_FAILED', 'follow-up failed');
+    const msg = e instanceof Error ? e.message : 'follow-up failed';
+    throw new AppError('STEP_FAILED', `follow-up failed: ${msg}`);
   }
 }
 

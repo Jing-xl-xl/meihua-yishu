@@ -28,8 +28,8 @@ export type WangShuaiEntry = {
   weak: Gua[];
 };
 
-/** 体用/生克；xie = 体生用耗 */
-export type TiYongRelation = 'sheng' | 'ke' | 'bi_he' | 'xie' | 'bei_ke';
+/** 体用/生克；v2 码（规格 §5.1）：yong_ke=用克体，ti_ke=体克用 */
+export type TiYongRelation = 'sheng' | 'bi_he' | 'xie' | 'yong_ke' | 'ti_ke';
 
 export type KnowledgeMeta = {
   version: string;

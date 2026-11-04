@@ -10,9 +10,10 @@ import {
 } from '../api/client';
 import { PERSON_TO_GUA } from '../api/methods';
 import { HexBoard, GUA_ORDER, dualToLines, guaZh } from '../components/HexBoard';
+import { SignModal } from '../components/SignModal';
 import { CasesPage, KnowledgePage, MemoryPage, SettingsPage } from '../features/pages';
 import { ToastHost, toast } from '../components/ui';
-import { ZHI_BY_NUM, GUA_NAME_ZH, qiSegments, qiTrendPlain } from '@meihua/shared';
+import { ZHI_BY_NUM, GUA_NAME_ZH, qiSegments, qiTrendPlain, elementZh } from '@meihua/shared';
 import {
   STATUS_LABEL,
   STEP_TITLES,
@@ -231,6 +232,7 @@ export function App() {
   const [chatPinned, setChatPinned] = useState(true);
   const [hexFull, setHexFull] = useState(false);
   const [verdictOpen, setVerdictOpen] = useState(false);
+  const [signOpen, setSignOpen] = useState(false);
   const [status, setStatus] = useState('');
   const [formError, setFormError] = useState('');
   const [page, setPage] = useState<
@@ -246,6 +248,7 @@ export function App() {
     }>
   >([]);
   const abortRef = useRef<AbortController | null>(null);
+  const summaryStreamBufRef = useRef('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const pushChat = useCallback((m: Omit<ChatMsg, 'id'>) => {
@@ -381,6 +384,7 @@ export function App() {
     setCast(null);
     setSteps([]);
     setVerdict(null);
+    setSignOpen(false);
     setChat([]);
     setLocked(false);
     setNeed(null);
@@ -643,6 +647,7 @@ export function App() {
   async function interpret() {
     if (!caseId) return setStatus('请先起卦');
     setStatus('解卦中…');
+    summaryStreamBufRef.current = '';
     await runStream(`/api/cases/${caseId}/interpret`, {}, (f) => {
       if (f.event === 'step_done' || f.event === 'step_revised') {
         const st = f.data as StepState;
@@ -663,7 +668,31 @@ export function App() {
           kind: 'verdict',
           content: `占断（${gradeLabel(v.grade)}）：${v.summary}`,
         });
-        toast('ok', `解卦完成：${gradeLabel(v.grade)}`);
+        toast('ok', '已出签，可点阅签');
+      } else if (f.event === 'step_delta') {
+        const d = f.data as {
+          stepId?: number;
+          field?: string;
+          text?: string;
+        };
+        if (d.stepId != null && d.field === 'conclusion' && d.text) {
+          setSteps((list) =>
+            list.map((s) =>
+              s.stepId === d.stepId
+                ? { ...s, conclusion: `${s.conclusion ?? ''}${d.text}` }
+                : s,
+            ),
+          );
+        }
+      } else if (f.event === 'verdict_delta') {
+        const d = f.data as { field?: string; text?: string; append?: boolean };
+        if (d.field === 'summary' && d.text) {
+          summaryStreamBufRef.current += d.text;
+          const acc = summaryStreamBufRef.current;
+          setVerdict((v) => (v ? { ...v, summary: acc } : v));
+        }
+      } else if (f.event === 'message_delta') {
+        // followup 由 doFollowup 专管；interpret 路径忽略
       } else if (f.event === 'need_input') {
         setNeed(f.data as NeedInput);
         pushChat({
@@ -753,23 +782,60 @@ export function App() {
   }
 
   async function doFollowup() {
-    if (!caseId || !followText) return;
+    if (!caseId || !followText.trim() || running) return;
     setChatPinned(true);
     setFollowExpanded(false);
-    pushChat({ role: 'user', content: followText });
+    const q = followText.trim();
+    pushChat({ role: 'user', content: q });
+    setFollowText('');
+    let buf = '';
+    const msgId = `fu-${Date.now()}`;
+    setChat((c) => [
+      ...c,
+      { id: msgId, role: 'assistant', kind: 'followup', content: '…' },
+    ]);
     try {
-      const r = await apiClient.followup(caseId, followText);
-      // 存全文，展示层截断（R-14）
-      pushChat({
-        role: 'assistant',
-        kind: 'followup',
-        content: plainText(r.text),
-      });
+      await runStream(
+        `/api/cases/${caseId}/followup`,
+        { question: q },
+        (f) => {
+          if (f.event === 'message_delta') {
+            const d = f.data as { text?: string };
+            if (!d.text) return;
+            buf = buf === '…' ? d.text : buf + d.text;
+            setChat((c) =>
+              c.map((m) =>
+                m.id === msgId ? { ...m, content: plainText(buf) } : m,
+              ),
+            );
+          } else if (f.event === 'error') {
+            const e = f.data as { message?: string };
+            const msg = e.message ?? '追问失败';
+            setChat((c) =>
+              c.map((m) =>
+                m.id === msgId ? { ...m, content: `（未返回）${msg}` } : m,
+              ),
+            );
+            toast('error', msg);
+          }
+        },
+      );
+      if (buf === '' || buf === '…') {
+        setChat((c) =>
+          c.map((m) =>
+            m.id === msgId ? { ...m, content: '（未返回）' } : m,
+          ),
+        );
+      }
       setBackendDown(false);
     } catch (e) {
-      pushChat({ role: 'system', kind: 'error', content: String(e) });
+      setChat((c) =>
+        c.map((m) =>
+          m.id === msgId ? { ...m, content: `（未返回）${String(e)}` } : m,
+        ),
+      );
+      toast('error', String(e));
     }
-    setFollowText('');
   }
 
   const phase: FlowPhase = verdict
@@ -951,18 +1017,21 @@ export function App() {
           <div className="flowbar">
             {(
               [
-                ['prep', '准备'],
-                ['cast', '起卦'],
-                ['interpret', '解卦'],
-                ['done', '完成'],
+                ['prep', '准备', '壹'],
+                ['cast', '起卦', '贰'],
+                ['interpret', '解卦', '叁'],
+                ['done', '完成', '肆'],
               ] as const
-            ).map(([id, label], i, arr) => {
+            ).map(([id, label, chap], i, arr) => {
               const idx = ['prep', 'cast', 'interpret', 'done'].indexOf(phase);
               const cls =
                 i < idx ? 'done' : i === idx ? 'current' : '';
               return (
                 <span key={id} className={`flow-step ${cls}`}>
                   <span className="dot" />
+                  <span className="chap" aria-hidden>
+                    {chap}
+                  </span>
                   {label}
                   {i < arr.length - 1 && <span className="flow-sep"> ── </span>}
                 </span>
@@ -1417,7 +1486,7 @@ export function App() {
                             <b>体 · 我/主</b>
                             <span>
                               {GUA_NAME_ZH[qiSegs[0]!.ti] ?? qiSegs[0]!.ti}
-                              （{qiSegs[0]!.tiEl}）
+                              （{elementZh(qiSegs[0]!.tiEl)}）
                             </span>
                             <em>
                               {qiSegs[0]!.ti === cast.ben.lower ? '下卦' : '上卦'}
@@ -1425,13 +1494,13 @@ export function App() {
                           </div>
                           <div className="qi-flow">
                             <span>
-                              {qiSegs[0]!.yongEl}
+                              {elementZh(qiSegs[0]!.yongEl)}
                               {qiSegs[0]!.relation === 'bi_he'
                                 ? ' ≡ '
                                 : qiSegs[0]!.flow === 'yong_to_ti'
                                   ? ' → '
                                   : ' ⇐ '}
-                              {qiSegs[0]!.tiEl}
+                              {elementZh(qiSegs[0]!.tiEl)}
                             </span>
                             <b>{qiSegs[0]!.label}</b>
                             <em>{qiSegs[0]!.plain}</em>
@@ -1440,7 +1509,7 @@ export function App() {
                             <b>用 · 事/客</b>
                             <span>
                               {GUA_NAME_ZH[qiSegs[0]!.yong] ?? qiSegs[0]!.yong}
-                              （{qiSegs[0]!.yongEl}）
+                              （{elementZh(qiSegs[0]!.yongEl)}）
                             </span>
                             <em>
                               {qiSegs[0]!.yong === cast.ben.lower ? '下卦·动所在' : '上卦·动所在'}
@@ -1679,6 +1748,23 @@ export function App() {
                 </>
               )}
 
+              {verdict && cast && (
+                <SignModal
+                  open={signOpen}
+                  onClose={() => setSignOpen(false)}
+                  sign={{
+                    grade: verdict.grade,
+                    ben: {
+                      name: cast.ben.name,
+                      lines: cast.ben.lines,
+                      movingYao: cast.movingYao,
+                    },
+                    poem: verdict.poem,
+                    question,
+                  }}
+                />
+              )}
+
               {verdict && (
                 <article className="card verdict">
                   <button
@@ -1693,6 +1779,14 @@ export function App() {
                     <span className="verdict-sum">
                       {truncateLine(verdict.summary, 36)}
                     </span>
+                    <button
+                      type="button"
+                      className="primary sm sign-open-btn"
+                      aria-label="打开签牌"
+                      onClick={() => setSignOpen(true)}
+                    >
+                      阅签
+                    </button>
                     <span className="muted">
                       {verdictOpen ? '收起' : '展开占断书'}
                     </span>

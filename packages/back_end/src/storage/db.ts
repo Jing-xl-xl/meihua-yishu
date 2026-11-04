@@ -7,6 +7,7 @@ import { MIGRATIONS } from './migrations/001_init';
 import { MIGRATIONS_002 } from './migrations/002_session_route_rounds';
 import { MIGRATIONS_003 } from './migrations/003_persons_role_card';
 import { MIGRATIONS_004 } from './migrations/004_memories_anchor';
+import { MIGRATIONS_005 } from './migrations/005_persons_persona_tone';
 
 export type Db = Database.Database;
 
@@ -36,7 +37,13 @@ export function migrate(db: Db): void {
   const insert = db.prepare(
     'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
   );
-  for (const m of [...MIGRATIONS, ...MIGRATIONS_002, ...MIGRATIONS_003, ...MIGRATIONS_004]) {
+  for (const m of [
+    ...MIGRATIONS,
+    ...MIGRATIONS_002,
+    ...MIGRATIONS_003,
+    ...MIGRATIONS_004,
+    ...MIGRATIONS_005,
+  ]) {
     if (applied.has(m.version)) continue;
     const run = db.transaction(() => {
       db.exec(m.sql);

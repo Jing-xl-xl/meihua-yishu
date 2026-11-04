@@ -1,6 +1,20 @@
 import type { Element } from '../types/base';
 import { WUXING_KE, WUXING_SHENG } from '../constants/wuxing';
 
+/** 五行中文显示（W8-0；禁 metal/wood 直出） */
+export const ELEMENT_ZH: Record<Element, string> = {
+  metal: '金',
+  wood: '木',
+  water: '水',
+  fire: '火',
+  earth: '土',
+};
+
+export function elementZh(e: string | undefined): string {
+  if (!e) return '';
+  return ELEMENT_ZH[e as Element] ?? e;
+}
+
 export type ElementRelation =
   | 'sheng'
   | 'ke'

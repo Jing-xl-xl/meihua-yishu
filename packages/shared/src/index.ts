@@ -48,7 +48,7 @@ export type {
   Message,
 } from './types/session';
 
-export type { Verdict, VerdictGrade } from './types/verdict';
+export type { Verdict, VerdictGrade, VerdictPoem } from './types/verdict';
 
 export type {
   MemoryType,
@@ -100,8 +100,17 @@ export {
   hexName,
   hexByKingwen,
 } from './utils/guaName';
-export { elementRelation } from './utils/wuxing';
+export { elementRelation, elementZh, ELEMENT_ZH } from './utils/wuxing';
 export type { ElementRelation } from './utils/wuxing';
+export {
+  relationFromYongTi,
+  gradeFromYongTiWangShuai,
+  legacyRelationToV2,
+} from './utils/tiYongRelation';
+export type {
+  TiYongRelationV2,
+  WangShuaiLevel,
+} from './utils/tiYongRelation';
 export {
   tiYongFromMovingYao,
   qiFromDual,
@@ -126,6 +135,12 @@ export {
 export { zhiNum, zhiName } from './utils/zhi';
 export { newId } from './utils/id';
 export { isStepId } from './utils/stepId';
+export {
+  computeProfileAxes,
+  isAxesEmpty,
+  isDoneCase,
+} from './utils/profileAxes';
+export type { ProfileAxes, ProfileCaseLite } from './utils/profileAxes';
 
 // 知识词条
 export type {

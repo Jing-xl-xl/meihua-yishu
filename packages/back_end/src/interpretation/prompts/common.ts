@@ -3,6 +3,7 @@ export const STYLE_RULES = [
   '使用现代白话，忌绝对化与恐吓（禁止：必死、定凶灾、死定了等）',
   'conclusion 1～3 句；reasoningNote 不超过 2～3 句',
   '结论紧扣用户问题，可引用知识依据',
+  '【三槽】conclusion：先一句点住所问（勿用「体卦/用卦/首先」起句），再一句断势，可再一句短落点；可写成自然短段，不是提纲。',
   '只输出 JSON（含 conclusion / evidence / reasoningNote / sources）',
   '不要输出 status；status 由系统写入',
   '正文只用纯文本：禁止 **、#、-、•、` 等 Markdown 符号',

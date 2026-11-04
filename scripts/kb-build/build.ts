@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { HEXAGRAM_TABLE, GUA_NAME_ZH } from '@meihua/shared';
 import type { Gua, HexagramData, HexLineData, JieqiMonthKey } from '@meihua/shared';
 
+import { liuXiangStats, parseLiuXiang } from './liuxiang';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(__dirname, '../..');
 const KB_MD = resolve(APP_ROOT, '../梅花易数知识库.md');
@@ -221,10 +223,22 @@ function main(): void {
     ],
   });
 
+  // §4.2 类象全表（W7）
+  const liuxiang = parseLiuXiang(md);
+  const stats = liuXiangStats(liuxiang);
+  for (const s of stats) {
+    if (!s.coreOk) {
+      console.warn('warn: liuxiang core categories incomplete:', s.gua);
+    }
+    console.log(`liuxiang ${s.gua}: cats=${s.categories} words=${s.words}`);
+  }
+  writeJson('graph/liuxiang.json', liuxiang);
+
   const meta = {
     version: `1.0.0-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
     builtAt: new Date().toISOString(),
     sourceHash,
+    liuxiang: 1,
   };
   writeJson('meta.json', meta);
   console.log('kb-build done', meta.version);

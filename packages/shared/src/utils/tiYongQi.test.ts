@@ -35,7 +35,7 @@ describe('qiSegments / 用克体', () => {
     });
     expect(segs[0]!.yong).toBe('li');
     expect(segs[0]!.ti).toBe('dui');
-    expect(segs[0]!.relation).toBe('ke');
+    expect(segs[0]!.relation).toBe('yong_ke');
     expect(segs[0]!.label).toBe('用克体');
     expect(segs[0]!.plain).toBe('被外压');
   });
@@ -50,9 +50,9 @@ describe('qiSegments / 用克体', () => {
 describe('mapRelation / 趋势', () => {
   it('用对体映射', () => {
     expect(mapRelation('sheng')).toBe('sheng');
-    expect(mapRelation('ke')).toBe('ke');
+    expect(mapRelation('ke')).toBe('yong_ke');
     expect(mapRelation('bei_sheng')).toBe('xie');
-    expect(mapRelation('bei_ke')).toBe('bei_ke');
+    expect(mapRelation('bei_ke')).toBe('ti_ke');
   });
 
   it('qiTrendPlain', () => {

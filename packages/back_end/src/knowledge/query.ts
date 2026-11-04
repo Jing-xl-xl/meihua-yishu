@@ -45,12 +45,14 @@ export function loadKnowledge(dir: string): KnowledgeIndex {
     categories: string[];
   };
 
+  // tiyong.json 历史键位：ke 文案=体克用，bei_ke 文案=用克体（规格 §5.1）
+  // 映射到 v2 码：ti_ke=体克用，yong_ke=用克体
   const tiyong = {
     sheng: tiyongRaw.sheng!,
-    ke: tiyongRaw.ke!,
     bi_he: tiyongRaw.bi_he!,
     xie: tiyongRaw.xie!,
-    bei_ke: tiyongRaw.bei_ke!,
+    yong_ke: tiyongRaw.bei_ke!,
+    ti_ke: tiyongRaw.ke!,
   } as Record<TiYongRelation, string>;
 
   return {
@@ -138,12 +140,20 @@ export function makeQuery(index: KnowledgeIndex) {
       return index.shibazhan.categories.join('、');
     },
 
-    /** D-2 惰性 */
+    /** D-2 惰性；缺文件返回空对象，不抛（W7） */
     liuXiang(gua: Gua): Record<string, string[]> {
-      const all = lazyJson<Record<Gua, Record<string, string[]>>>(
-        'graph/liuxiang.json',
-      );
-      return all[gua] ?? {};
+      try {
+        const all = lazyJson<{
+          gua?: Record<string, Record<string, string[]>>;
+        } & Record<string, unknown>>('graph/liuxiang.json');
+        const map = all.gua;
+        if (map && typeof map === 'object') {
+          return map[gua] ?? {};
+        }
+        return {};
+      } catch {
+        return {};
+      }
     },
 
     anchor(id: string): AnchorRef {

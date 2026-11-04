@@ -9,7 +9,7 @@ import { MockProvider } from '../llm/mock';
 import { join } from 'node:path';
 
 import { locks, runInterpret, reviseInterpret, resumeInterpret, answerFollowUp } from './pipeline';
-import { composeVerdict, gradeFromShengKe } from './verdict';
+import { composeVerdict } from './verdict';
 
 const DIR = join(process.cwd(), 'knowledge');
 const knowledge = makeQuery(loadKnowledge(DIR));
@@ -104,10 +104,17 @@ describe('步 4/5 规则 + grade 映射', () => {
     );
   });
 
-  it('gradeFromShengKe', () => {
-    expect(gradeFromShengKe('sheng')).toBe('good');
-    expect(gradeFromShengKe('xie')).toBe('neutral');
-    expect(gradeFromShengKe('bei_ke')).toBe('bad');
+  it('gradeFromYongTiWangShuai（经 composeVerdict）', () => {
+    // 用生体+平 → great；体生用+平 → bad；用克体+衰 → terrible
+    expect(
+      composeVerdict({ steps: [], relation: 'sheng', wangShuai: '平' }).grade,
+    ).toBe('great');
+    expect(
+      composeVerdict({ steps: [], relation: 'xie', wangShuai: '平' }).grade,
+    ).toBe('bad');
+    expect(
+      composeVerdict({ steps: [], relation: 'yong_ke', wangShuai: '衰' }).grade,
+    ).toBe('terrible');
   });
 });
 
@@ -224,6 +231,7 @@ describe('composeVerdict', () => {
     ];
     const v = composeVerdict({ steps, relation: 'sheng' });
     expect(v.basedOnSteps).toEqual([4]);
-    expect(v.grade).toBe('good');
+    // 用生体 + 旺衰缺省平 → 大吉（规格 §5.2）
+    expect(v.grade).toBe('great');
   });
 });

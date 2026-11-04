@@ -98,6 +98,12 @@ export type StepState = {
   reasoningNote?: string;
 };
 
+export type VerdictPoem = {
+  text?: string;
+  lines?: [string, string] | string[];
+  source?: 'llm' | 'rule' | string;
+};
+
 export type Verdict = {
   grade: string;
   summary: string;
@@ -105,6 +111,7 @@ export type Verdict = {
   timing: string;
   risks: string[];
   basedOnSteps: number[];
+  poem?: VerdictPoem;
 };
 
 export const apiClient = {
@@ -120,6 +127,18 @@ export const apiClient = {
     api<{ ok: boolean }>(`/api/persons/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ name }),
+    }),
+  updatePerson: (
+    id: string,
+    body: {
+      name?: string;
+      persona?: 'feiyu' | 'xiansheng';
+      tone?: 'standard' | 'brief' | 'warm' | 'elegant';
+    },
+  ) =>
+    api<{ ok: boolean; person?: Person }>(`/api/persons/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
     }),
   route: (
     sessionId: string,
@@ -216,8 +235,37 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify({ personId }),
     }),
+  refreshProfile: (personId: string) =>
+    api<{
+      ok: boolean;
+      caseCount?: number;
+      threshold?: number;
+      message?: string;
+      generated?: {
+        style?: string;
+        domains?: string;
+        verification?: string;
+        communication?: string;
+        caseCount?: number;
+        axes?: {
+          focus: number;
+          lost: number;
+          work: number;
+          brief: number;
+          feedback: number;
+          params: number;
+        };
+      };
+    }>('/api/memory/profile/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ personId }),
+    }),
   getHexagram: (id: string) =>
     api<Record<string, unknown>>(`/api/knowledge/hexagram?id=${id}`),
+  getLiuXiang: (gua?: string) =>
+    api<Record<string, unknown>>(
+      `/api/knowledge/liuxiang${gua ? `?gua=${encodeURIComponent(gua)}` : ''}`,
+    ),
   putLlmSettings: (body: {
     provider?: string;
     baseUrl?: string;

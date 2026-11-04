@@ -60,12 +60,12 @@ export function EmptyState({
   return (
     <div className="empty-state">
       <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden>
-        <rect x="10" y="8" width="28" height="4" rx="1" fill="#2c2c2c" />
-        <rect x="10" y="16" width="12" height="4" rx="1" fill="#2c2c2c" />
-        <rect x="26" y="16" width="12" height="4" rx="1" fill="#2c2c2c" />
-        <rect x="10" y="24" width="28" height="4" rx="1" fill="#c45c26" />
-        <rect x="10" y="32" width="12" height="4" rx="1" fill="#2c2c2c" />
-        <rect x="26" y="32" width="12" height="4" rx="1" fill="#2c2c2c" />
+        <rect x="10" y="8" width="28" height="4" rx="1" fill="#2a2520" />
+        <rect x="10" y="16" width="12" height="4" rx="1" fill="#2a2520" />
+        <rect x="26" y="16" width="12" height="4" rx="1" fill="#2a2520" />
+        <rect x="10" y="24" width="28" height="4" rx="1" fill="#b23a2e" />
+        <rect x="10" y="32" width="12" height="4" rx="1" fill="#2a2520" />
+        <rect x="26" y="32" width="12" height="4" rx="1" fill="#2a2520" />
       </svg>
       <strong>{title}</strong>
       {desc && <p className="muted">{desc}</p>}
