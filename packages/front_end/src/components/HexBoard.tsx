@@ -1,3 +1,5 @@
+import { useLayoutEffect, useState } from 'react';
+
 /** 与后端 trigrams.ts 同构：7=阳 8=阴，下→上 */
 const TRIGRAM: Record<string, [number, number, number]> = {
   qian: [7, 7, 7],
@@ -53,6 +55,32 @@ function isYang(v: number): boolean {
   return v === 7 || v === 9;
 }
 
+/** 揲蓍 → 连续形变参数 v（视觉设计语言 §4.6）：7 少阳=1，8 少阴=0，9 老阳=1，6 老阴=0 */
+export function yaoToV(yao: number): number {
+  return yao === 7 || yao === 9 ? 1 : 0;
+}
+
+/** 爻条：双段矩形，间隙随 v 合拢（v=0 阴、v=1 阳）；morph=从对侧形变落位 ≤240ms */
+export function YaoBar({ v, morph }: { v: number; morph?: boolean }) {
+  const [liveV, setLiveV] = useState(morph ? 1 - v : v);
+  useLayoutEffect(() => {
+    if (!morph) {
+      setLiveV(v);
+      return;
+    }
+    setLiveV(1 - v);
+    const id = requestAnimationFrame(() => setLiveV(v));
+    return () => cancelAnimationFrame(id);
+  }, [morph, v]);
+  const k = 0.8 + 0.2 * liveV;
+  return (
+    <span className="yao-bar" aria-hidden>
+      <span className="bar seg-l" style={{ transform: `scaleX(${k})` }} />
+      <span className="bar seg-r" style={{ transform: `scaleX(${k})` }} />
+    </span>
+  );
+}
+
 export function MiniLines({ lines }: { lines: number[] }) {
   return (
     <span className="mini-lines" aria-hidden>
@@ -106,7 +134,8 @@ export function HexBoard({
       {showLines ? (
         <div className="hexboard-yao">
           {[5, 4, 3, 2, 1, 0].map((i) => {
-            const yang = isYang(lines[i] ?? 8);
+            const yao = lines[i] ?? 8;
+            const yang = isYang(yao);
             const isMoving =
               kind === 'ben' && movingYao != null && movingYao === i + 1;
             const isBianMark =
@@ -126,17 +155,7 @@ export function HexBoard({
                   .filter(Boolean)
                   .join(' ')}
               >
-                <span className="yao-bar" aria-hidden>
-                  {yang ? (
-                    <span className="bar solid" />
-                  ) : (
-                    <>
-                      <span className="bar seg" />
-                      <span className="bar gap" />
-                      <span className="bar seg" />
-                    </>
-                  )}
-                </span>
+                <YaoBar v={yaoToV(yao)} morph={isMoving || isBianMark} />
                 <span className="yao-flag">
                   {isMoving ? '动' : isBianMark ? '变' : ''}
                 </span>

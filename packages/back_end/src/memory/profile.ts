@@ -1,5 +1,9 @@
 import type { Case, Person, Verdict } from '@meihua/shared';
-import { computeProfileAxes, type ProfileAxes } from '@meihua/shared';
+import {
+  buildProfileCopy,
+  computeProfileAxes,
+  type ProfileAxes,
+} from '@meihua/shared';
 
 import type { LLMProvider } from '../llm/types';
 import { tryParseJsonText } from '../llm/parse';
@@ -10,13 +14,23 @@ export type { ProfileAxes };
 export type ProfileCard = {
   version: 1;
   caseCount: number;
+  /** 性格特质 */
+  nature: string;
+  /** 所求所念 */
+  desire: string;
+  /** 处事风格 */
   style: string;
-  domains: string;
-  verification: string;
-  communication: string;
+  /** 相处之道 */
+  with: string;
+  /** 素描 ≤30 字 */
+  sketch: string;
   updatedAt: string;
   generatedBy: 'llm' | 'rule';
   axes?: ProfileAxes;
+  /** 兼容旧字段 */
+  domains?: string;
+  verification?: string;
+  communication?: string;
 };
 
 export const PROFILE_THRESHOLD = 5;
@@ -37,6 +51,31 @@ const METHOD_ZH: Record<string, string> = {
 function methodZh(m: string | undefined): string {
   if (!m) return '';
   return METHOD_ZH[m] ?? m;
+}
+
+/** 稍文白话 · 由六维句库拼装（§6.2）→ shared buildProfileCopy */
+function buildNature(axes: ProfileAxes): string {
+  return buildProfileCopy(axes).nature;
+}
+
+function buildDesire(axes: ProfileAxes, domains: string): string {
+  const c = buildProfileCopy(axes);
+  if (axes.explore < 55 && axes.home < 55 && axes.social < 55 && domains && domains !== '样本不足') {
+    return `常问${domains.split('·')[0]?.trim() ?? '日常诸事'}，求心中有数。`;
+  }
+  return c.desire;
+}
+
+function buildStyle(axes: ProfileAxes): string {
+  return buildProfileCopy(axes).style;
+}
+
+function buildWith(axes: ProfileAxes): string {
+  return buildProfileCopy(axes).with;
+}
+
+function buildSketch(axes: ProfileAxes): string {
+  return buildProfileCopy(axes).sketch;
 }
 
 export function parseProfileCard(raw: string | null | undefined): ProfileCard | null {
@@ -124,19 +163,24 @@ export function ruleProfileCard(store: Store, personId: string): ProfileCard {
   return {
     version: 1,
     caseCount,
-    style: styleBits.join('；'),
-    domains,
-    verification,
-    communication: '按当前语气就事说事；建议条具体、可执行。',
+    nature: buildNature(axes),
+    desire: buildDesire(axes, domains),
+    style: buildStyle(axes),
+    with: buildWith(axes),
+    sketch: buildSketch(axes),
     updatedAt: new Date().toISOString(),
     generatedBy: 'rule',
     axes,
+    domains,
+    verification,
+    communication: '按当前语气就事说事；建议条具体、可执行。',
   };
 }
 
-const LLM_SYSTEM = `你是档案分析师，只总结给定语料，禁止脑补人格与未出现的经历。
-输出 JSON：{"style":"","domains":"","verification":"","communication":""}
-每栏一短句；语料不足写「样本不足」。沟通建议只谈表达与信息呈现，不要求改变语气设定。`;
+const LLM_SYSTEM = `你是画像润色者。只润色给定骨架，禁止新增性格断言、禁止命理判词（注定/必…之命）、禁止恐吓。
+风格：稍文白话，如「其人持重…」。
+输出 JSON：{"nature":"","desire":"","style":"","with":"","sketch":""}
+sketch 不超过 30 字。语料不足写「样本尚浅」。`;
 
 export async function llmProfileCard(
   store: Store,
@@ -185,13 +229,16 @@ export async function llmProfileCard(
     return {
       version: 1,
       caseCount: base.caseCount,
+      nature: pick(j.nature, base.nature),
+      desire: pick(j.desire, base.desire),
       style: pick(j.style, base.style),
-      domains: pick(j.domains, base.domains),
-      verification: pick(j.verification, base.verification),
-      communication: pick(j.communication, base.communication),
+      with: pick(j.with, base.with),
+      sketch: pick(j.sketch, base.sketch),
       updatedAt: new Date().toISOString(),
       generatedBy: 'llm',
       axes: base.axes,
+      domains: base.domains,
+      verification: base.verification,
     };
   } catch {
     return base;

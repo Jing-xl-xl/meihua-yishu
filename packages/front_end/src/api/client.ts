@@ -1,42 +1,65 @@
 import { parseFrame, streamSse, type SseFrame } from './sse';
 
-/** 业务/网络错误 → 中文（wengua Q-10） */
+/** 业务/网络错误 → 人话（含下一步）。P0：单一来源，UI 一律走 errText */
+const CODE_TEXT: Record<string, string> = {
+  NO_API_KEY: '未配置模型 Key：起卦与规则步骤仍可用；去「文房」填写后可解其余步骤',
+  LLM_UNAVAILABLE: '模型暂不可用：已完成步骤已保留，可稍后重试或先用离线规则',
+  LLM_RATE_LIMIT: '模型限流：请稍等约一分钟再试',
+  LLM_TIMEOUT: '模型响应超时：已完成步骤已保留，可重试本步',
+  LLM_UNAUTHORIZED: 'API Key 无效或无权限：去「文房」检查 Key 与模型名',
+  LLM_BAD_JSON: '模型返回格式异常：已降级为规则结论',
+  LLM_EMPTY_RESPONSE: '模型没有返回内容：可重试，或先用离线规则',
+  LLM_ABORT: '已中断：完成的步骤已保留',
+  LLM_HTTP_ERROR: '模型接口报错：检查 Base URL 与模型名，或改用 DeepSeek/Kimi 预设',
+  STEP_FAILED: '这一步没有解出来：可重试本步，其余步骤不受影响',
+  CASE_EXISTS: '一会话一案例：请点「新事」再起卦',
+  CASE_IN_FLIGHT: '该案例正在解卦，请稍候',
+  PERSON_NOT_FOUND: '档案不存在：请重新选择或新建档案',
+  KB_NOT_LOADED: '知识库未就绪：请在应用目录重新构建知识库后重启',
+  CAST_INVALID_INPUT: '起卦信息不完整：检查问题、报数与时间',
+  INVALID_REQUEST: '输入不合法：请检查当前表单',
+  SECRET_SETTING_REJECTED: '密钥不能存在普通设置里：请用「文房」的 Key 输入框',
+  INTERNAL: '内部错误：请重试；若反复出现，重启应用',
+};
+
 export function humanizeError(raw: unknown): string {
-  const s = String(raw ?? '');
+  const s = String(raw ?? '').replace(/^Error:\s*/, '').trim();
+  if (!s) return '出现未知问题：请重试';
+  for (const [code, text] of Object.entries(CODE_TEXT)) {
+    if (s.includes(code)) return text;
+  }
   if (
     /Failed to fetch|NetworkError|ECONNREFUSED|fetch failed|network failure|网络失败/i.test(s)
   ) {
-    return '后端未启动或不可达，请运行 npm run dev:api';
-  }
-  if (/timeout|timed out|超时/i.test(s)) {
-    return '请求超时，请重试';
-  }
-  if (/abort|SSE|连接中断|EventSource/i.test(s) && /abort|中断|closed/i.test(s)) {
-    return '连接中断；已完成步骤已保留，可重新解卦';
+    return '后端服务未启动：请重新双击「启动梅花算卜」，或检查终端是否有报错';
   }
   if (/http 404|HTTP 404/i.test(s)) {
-    return '接口 404：请改用 DeepSeek/Kimi 预设，或检查 Base 是否含 /v1、协议是否选对';
+    return '模型接口 404：请改用 DeepSeek/Kimi 预设，或检查 Base 是否含 /v1、协议是否选对';
   }
   if (/http 401|HTTP 401|http 403|HTTP 403|unauthorized/i.test(s)) {
-    return 'API Key 无效或无权限';
+    return 'API Key 无效或无权限：去「文房」检查 Key 与模型名';
   }
-  if (s.includes('LLM_HTTP_ERROR') || /^http \d+/i.test(s.trim())) {
-    return `模型接口错误：${s}`;
+  if (/timeout|timed out|超时/i.test(s)) {
+    return '请求超时：可重试，完成的步骤不会丢';
   }
-  if (s.includes('too_small') || s.includes('question')) {
+  if (/abort|SSE|连接中断|EventSource/i.test(s) && /abort|中断|closed/i.test(s)) {
+    return '连接中断：已完成步骤已保留，可重新解卦';
+  }
+  if (s.includes('too_small') || s.includes('invalid_value')) {
     if (s.includes('question')) return '请填写所问之事';
-  }
-  if (s.includes('CAST_INVALID_INPUT')) return '起卦信息不完整或非法';
-  if (s.includes('CASE_EXISTS')) return '一会话一案例，请点「新事」';
-  if (s.includes('NO_API_KEY')) return '请先在设置中配置 API Key';
-  if (s.includes('CASE_IN_FLIGHT')) return '该案例正在解卦，请稍候';
-  if (s.includes('"origin"') || s.includes('too_small') || s.includes('invalid_value')) {
     if (s.includes('hourZhi')) return '请填写时支';
     if (s.includes('text')) return '请填写文字';
     if (s.includes('count')) return '请填写数量';
-    return '输入不合法，请检查表单';
+    return '输入不合法：请检查当前表单';
   }
-  return s.replace(/^Error:\s*/, '');
+  if (/[\u4e00-\u9fa5]/.test(s)) return s; // 已是中文（含我们包装过的）
+  return `出现技术错误：${s.slice(0, 80)}`;
+}
+
+/** UI 统一入口：Error 对象或字符串 → 人话 */
+export function errText(raw: unknown): string {
+  const base = raw instanceof Error ? raw.message : raw;
+  return humanizeError(base);
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -62,7 +85,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     data = null;
   }
   if (!res.ok) {
-    const raw = data?.message || data?.code || `HTTP ${res.status} 后端异常`;
+    const raw = `${data?.code ?? ''} ${data?.message ?? ''} HTTP ${res.status}`;
     throw new Error(humanizeError(raw));
   }
   if (data == null) {
@@ -72,6 +95,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type Person = { id: string; name: string; profileCard?: string };
+
+/** 会话/案例消息（追问、背景问答） */
+export type MessageRow = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  caseId?: string | null;
+  createdAt?: string;
+};
 
 export type HexLine = { pos: number; yang: boolean; label: string; text: string };
 
@@ -115,6 +147,34 @@ export type Verdict = {
 };
 
 export const apiClient = {
+  getPrecastAsk: (caseId: string) =>
+    api<{
+      ask: null | {
+        question: string;
+        why?: string;
+        examples?: string[];
+        suggested?: string[];
+        slot?: string;
+      };
+    }>(`/api/cases/${caseId}/precast-ask`),
+  precast: (caseId: string, body: { answer?: string; skip?: boolean }) =>
+    api<{ ok: boolean }>(`/api/cases/${caseId}/precast`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getCharacter: () =>
+    api<{
+      id: string;
+      name: string;
+      tagline: string;
+      identity: string[];
+      voice: Record<string, string>;
+      examples: Array<{ user: string; reply: string }>;
+      boundaries: string[];
+      stages: Record<string, string>;
+    }>('/api/character'),
+
   listPersons: () => api<{ persons: Person[] }>('/api/persons'),
   createPerson: (name: string) =>
     api<{ person: Person }>('/api/persons', {
@@ -132,8 +192,8 @@ export const apiClient = {
     id: string,
     body: {
       name?: string;
-      persona?: 'feiyu' | 'xiansheng';
-      tone?: 'standard' | 'brief' | 'warm' | 'elegant';
+      persona?: 'feiyu';
+      tone?: 'standard' | 'brief' | 'warm';
     },
   ) =>
     api<{ ok: boolean; person?: Person }>(`/api/persons/${id}`, {
@@ -246,6 +306,10 @@ export const apiClient = {
         domains?: string;
         verification?: string;
         communication?: string;
+        nature?: string;
+        desire?: string;
+        with?: string;
+        sketch?: string;
         caseCount?: number;
         axes?: {
           focus: number;
@@ -291,17 +355,35 @@ export const apiClient = {
     api<{
       case: {
         id: string;
+        sessionId?: string;
+        input?: { question?: string };
+        method?: string;
         cast?: CastResult;
         verdict?: Verdict;
       };
       steps: StepState[];
+      /** 五幕阶段（旧案例读时派生） */
+      stage?: string;
       feedback?: {
         actual?: string;
         accuracy?: string;
         deviation_notes?: string;
         deviation_steps_json?: string;
       } | null;
+      messages?: MessageRow[];
     }>(`/api/cases/${caseId}`),
+  deleteCase: (caseId: string) =>
+    api<{
+      ok: boolean;
+      deleted: {
+        caseId: string;
+        steps: number;
+        messages: number;
+        feedback: number;
+        memories: number;
+        sessionDeleted: boolean;
+      };
+    }>(`/api/cases/${caseId}`, { method: 'DELETE' }),
   listMessages: (sessionId: string) =>
     api<{
       messages: {
@@ -321,6 +403,49 @@ export const apiClient = {
     ),
   stats: (personId: string) =>
     api<Record<string, number | object>>(`/api/cases/stats?personId=${personId}`),
+  getProfileInfo: (personId: string) =>
+    api<{ info: Record<string, unknown> }>(
+      `/api/persons/${personId}/profile-info`,
+    ),
+  putProfileInfo: (personId: string, body: Record<string, unknown>) =>
+    api<{ ok: boolean; info?: Record<string, unknown> }>(
+      `/api/persons/${personId}/profile-info`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
+  listRelations: (personId?: string) =>
+    api<{
+      relations: Array<{
+        id: string;
+        fromId: string;
+        toId: string;
+        relCode: string;
+        label?: string | null;
+        closeness?: number | null;
+      }>;
+    }>(`/api/relations${personId ? `?personId=${encodeURIComponent(personId)}` : ''}`),
+  upsertRelation: (body: Record<string, unknown>) =>
+    api<{ ok: boolean; id: string }>(`/api/relations`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getGraph: (centerId?: string) =>
+    api<{
+      centerId: string | null;
+      persons: Array<{
+        id: string;
+        name: string;
+        kind: string;
+        info: Record<string, unknown>;
+      }>;
+      relations: Array<{
+        id: string;
+        fromId: string;
+        toId: string;
+        relCode: string;
+        label?: string | null;
+        closeness?: number | null;
+      }>;
+    }>(`/api/graph${centerId ? `?centerId=${encodeURIComponent(centerId)}` : ''}`),
 };
 
 export { parseFrame, streamSse };

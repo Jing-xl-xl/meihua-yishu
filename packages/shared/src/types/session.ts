@@ -9,10 +9,10 @@ export type Person = {
   profileCard?: string;
   /** W12 先天角色稿（边界/术数；不含口吻句） */
   roleCard?: string;
-  /** 解卦人设（规格 §7.0）；默认 feiyu */
-  persona?: 'feiyu' | 'xiansheng';
-  /** 语气（规格 §1.5） */
-  tone?: 'standard' | 'brief' | 'warm' | 'elegant';
+  /** 占者（B1：单一人设「大肥鱼」；旧数据 xiansheng 归一到 feiyu） */
+  persona?: 'feiyu';
+  /** 语气（白话三档；旧数据 elegant 归一到 standard） */
+  tone?: 'standard' | 'brief' | 'warm';
 };
 
 /** 案例输入快照（一会话一案例；Message 支持追问） */
@@ -62,6 +62,9 @@ export type Case = {
   steps: StepState[];
   status: CaseStatus;
   verdict?: Verdict;
+  /** B：五幕状态（旧数据读时派生回填） */
+  dialogueStage?: string;
+  stageUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 };

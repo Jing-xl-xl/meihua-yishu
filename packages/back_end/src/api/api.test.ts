@@ -354,3 +354,25 @@ describe('cast methods + knowledge id (bug.xiu B-01/B-02)', () => {
     expect(r2.json().directionGua).toBe('xun');
   });
 });
+
+describe('占者角色卡（B1）', () => {
+  it('GET /api/character 返回大肥鱼卡（单人设）', async () => {
+    const app = createApp(makeDeps());
+    const res = await app.inject({ method: 'GET', url: '/api/character' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      id: string;
+      name: string;
+      voice: { humor: string };
+      examples: unknown[];
+      boundaries: string[];
+      stages: Record<string, string>;
+    };
+    expect(body.id).toBe('feiyu');
+    expect(body.name).toBe('大肥鱼');
+    expect(body.voice.humor).toContain('3 处');
+    expect(body.examples.length).toBeGreaterThan(0);
+    expect(body.boundaries.length).toBeGreaterThan(0);
+    expect(body.stages.verdict).toBeTruthy();
+  });
+});

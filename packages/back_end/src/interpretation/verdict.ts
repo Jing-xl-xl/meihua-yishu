@@ -11,12 +11,18 @@ import { gradeFromYongTiWangShuai } from '@meihua/shared';
 import type { LLMProvider } from '../llm/types';
 import { tryParseJsonText } from '../llm/parse';
 import { withSensitiveNotice } from './prompts/step7';
-import { buildPersonaSystem, type PersonaId } from './prompts/persona';
+import {
+  buildCharacterSystem,
+  normalizeTone,
+  validateFeiyuVoice,
+  type PersonaId,
+} from './prompts/persona';
 import {
   buildRewritePrompt,
   fewshotBlock,
   validateCopy,
 } from './copyCheck';
+import { checkVerdictAgainstSteps } from './consistency';
 
 /** @deprecated 使用 gradeFromYongTiWangShuai（需旺衰） */
 export function gradeFromShengKe(relation: TiYongRelation): VerdictGrade {
@@ -83,16 +89,29 @@ export async function enrichVerdictCopy(opts: {
   stepConclusions: string[];
   /** W3：summary 散文流式 */
   onSummaryDelta?: (text: string) => void;
+  /** 客户端断开时取消 LLM */
+  signal?: AbortSignal;
+  /** 语气（与九步一致） */
+  tone?: string;
+  /** 档案记忆（最多引用一次；可为空） */
+  memoryPrompt?: string;
+  /** 九步（用于一致性检查） */
+  steps?: StepState[];
 }): Promise<Verdict> {
   const v = opts.verdict;
   if (opts.offline) return v;
 
+  const tone = normalizeTone(opts.tone);
+  const memoryLine = opts.memoryPrompt
+    ? `\n【档案记忆（最多引用一次，且只在高度相关时；不相关别提）】\n${opts.memoryPrompt.slice(0, 800)}`
+    : '';
   const system = [
-    buildPersonaSystem({ persona: opts.persona }),
+    buildCharacterSystem({ stage: 'verdict', tone }),
     '你负责把九步结论合成给人读的占断说明。不要输出 grade。不要起新卦。',
     'summary 用 2～3 句话，第一句扣住所问；advice 2～3 条，动词开头、因问而异。',
     '禁止空话建议。' + VERDICT_OUT,
-    fewshotBlock(opts.persona ?? 'feiyu'),
+    fewshotBlock(),
+    memoryLine,
   ].join('\n');
 
   const user = [
@@ -112,9 +131,9 @@ export async function enrichVerdictCopy(opts: {
   try {
     // P0：summary 散文流（不流整包 JSON）
     const summarySys = [
-      buildPersonaSystem({ persona: opts.persona }),
+      buildCharacterSystem({ stage: 'verdict', tone }),
       '只写 2～3 句占断总说（人话），第一句扣住所问。不要 JSON，不要 grade，不要标题。',
-      fewshotBlock(opts.persona ?? 'feiyu'),
+      fewshotBlock(),
     ].join('\n');
     const summaryUser = [
       `所问：${opts.question}`,
@@ -127,6 +146,7 @@ export async function enrichVerdictCopy(opts: {
       temperature: 0.55,
       maxTokens: 280,
       onDelta: opts.onSummaryDelta,
+      signal: opts.signal,
     });
     const summaryText = sanitize(sumR.text);
 
@@ -155,14 +175,43 @@ export async function enrichVerdictCopy(opts: {
         isSummary: true,
         where: 'summary',
       });
+      const voiceHits = validateFeiyuVoice(summary, {
+        isVerdictOrFollowup: true,
+      }).hits;
       let adviceList = (out.advice ?? []).map(sanitize).filter(Boolean).slice(0, 3);
-      const adviceHits = adviceList.flatMap((a) =>
-        validateCopy(a, { isAdvice: true, where: 'advice' }).hits,
+      const adviceHits = adviceList.flatMap((a) => [
+        ...validateCopy(a, { isAdvice: true, where: 'advice' }).hits,
+        ...validateFeiyuVoice(a, { isVerdictOrFollowup: true }).hits.map(
+          (token) => ({ tier: 'hard' as const, token, where: 'advice' }),
+        ),
+      ]);
+      const consistency = checkVerdictAgainstSteps(
+        { ...v, summary, advice: adviceList },
+        opts.steps ?? [],
       );
-      if (!check.ok || adviceHits.length) {
-        const hits = [...check.hits, ...adviceHits];
+      if (
+        !check.ok ||
+        voiceHits.length ||
+        adviceHits.length ||
+        consistency.hits.length
+      ) {
+        const hits = [
+          ...check.hits,
+          ...voiceHits.map((token) => ({
+            tier: 'hard' as const,
+            token,
+            where: 'summary',
+          })),
+          ...adviceHits,
+          ...consistency.hits.map((token) => ({
+            tier: 'hard' as const,
+            token,
+            where: 'verdict',
+          })),
+        ];
         const rr = await opts.llm.streamChat({
-          system: '去 AI 腔改写，保持原意与长度约束，不要恐吓。',
+          system:
+            '去 AI 腔改写，保持大肥鱼口吻：短句、口语、不端着、不摆架子；保持原意与长度约束，不要恐吓。',
           messages: [
             {
               role: 'user',

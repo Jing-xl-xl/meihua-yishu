@@ -49,7 +49,23 @@ export type ExportCase = {
 export type ExportBundle = {
   version: 1;
   exportedAt: string;
-  person: { id: string; name: string; profileCard?: string };
+  person: {
+    id: string;
+    name: string;
+    profileCard?: string;
+    profileInfo?: Record<string, unknown>;
+    persona?: string;
+    tone?: string;
+  };
+  relations?: Array<{
+    id: string;
+    fromId: string;
+    toId: string;
+    relCode: string;
+    label?: string | null;
+    closeness?: number | null;
+    note?: string | null;
+  }>;
   sessions: Session[];
   cases: ExportCase[];
   /** 排除 rejected */
@@ -119,7 +135,11 @@ export function buildExportBundle(
       id: person.id,
       name: person.name,
       profileCard: person.profileCard,
+      profileInfo: store.getProfileInfo(personId) ?? undefined,
+      persona: person.persona,
+      tone: person.tone,
     },
+    relations: store.listRelations(personId),
     sessions,
     cases,
     memories,

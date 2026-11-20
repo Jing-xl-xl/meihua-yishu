@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { openDb } from '../storage/db';
 import { createStore } from '../storage/store';
 
-import { autoTags, writeResult, writeRound } from './write';
+import { autoTags, writeReflection, writeResult, writeRound } from './write';
 import { retrieve } from './retrieve';
 import {
   MEMORY_PROMISE,
@@ -181,5 +181,24 @@ describe('writeResult → retrieve 命中（B-06 闭环）', () => {
     });
     expect(prompt).toContain(MEMORY_PROMISE);
     expect(prompt).toContain('面试');
+  });
+});
+
+describe('writeReflection', () => {
+  it('写一条 summary 类型反思（tag 反思）', () => {
+    const { store, personId, sessionId, caseId } = setup();
+    const e = writeReflection(store, {
+      personId,
+      sessionId,
+      caseId,
+      question: '明日面试是否顺利',
+      gradeLabel: 'good',
+      summary: '整体有助力，但成迟；宜备不宜争。',
+      advice: ['把材料理顺'],
+    });
+    expect(e.type).toBe('summary');
+    expect(e.tags).toContain('反思');
+    expect(String((e.payload as { text?: string }).text)).toContain('反思');
+    expect(store.listMemories(personId).some((m) => m.id === e.id)).toBe(true);
   });
 });

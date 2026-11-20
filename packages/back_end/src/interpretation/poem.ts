@@ -103,8 +103,8 @@ const POEM_SYSTEM_BASE = `你是签诗写手，为梅花易数签牌写两句七
 规则：上句恰7个汉字，下句恰7个汉字；句内不要标点；上下句意脉相连；紧扣所问之事与卦象意象；与吉凶档同向；禁止恐吓与绝对化。
 只输出 JSON：{"lines":["上句","下句"]}`;
 
-function poemSystem(persona?: PersonaId): string {
-  return `${POEM_SYSTEM_BASE}\n${buildPoemPersonaLine(persona)}`;
+function poemSystem(_persona?: PersonaId): string {
+  return `${POEM_SYSTEM_BASE}\n${buildPoemPersonaLine()}`;
 }
 
 export function buildPoemUser(opts: {
@@ -217,6 +217,7 @@ export async function attachSignPoem(
     stepBrief?: string;
     persona?: PersonaId;
     onPoemLine?: (line: 'upper' | 'lower', text: string) => void;
+    signal?: AbortSignal;
   },
 ): Promise<Verdict> {
   if (verdict.poem) return verdict;

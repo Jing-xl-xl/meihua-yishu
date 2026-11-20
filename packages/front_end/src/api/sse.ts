@@ -43,6 +43,7 @@ export function parseFrame(buffer: string): {
       'memory_written',
       'error',
       'done',
+      'paused',
     ]);
     if (!known.has(event)) continue;
     frames.push({ event, data: parsed });

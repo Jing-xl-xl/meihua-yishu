@@ -1,8 +1,6 @@
 /**
  * 解卦文案机检（规格 §7.1b 甲/乙/丙）+ few-shot + 占断 LLM 草稿
  */
-import type { PersonaId } from './prompts/persona';
-
 export type TellTier = 'hard' | 'limit' | 'usage';
 
 export type TellHit = {
@@ -164,22 +162,16 @@ export function validateCopy(
   return { ok: hits.length === 0, hits };
 }
 
-/** few-shot：只学语气（规格 §7.4） */
+/** few-shot：只学语气（大肥鱼单人设） */
 export const FEWSHOT_FEIYU: readonly string[] = [
   '你问的这东西多半没跑远，像是压在常待的地方或夹层里。我赌还在——说不准啊哈哈。先别乱翻，按最近顺手放的那几处掏一圈。',
   '面试这条线是顺的，就是慢热，更像走流程等回音。你把材料理顺，比临场加戏管用；要是问时候，先看有没有人正式找你。',
 ];
 
-export const FEWSHOT_XIANSHENG: readonly string[] = [
-  '你问的这件物，多半未离身边，像伏在常所。宜静寻不宜躁动；自近日顺手放置处逐一检视，或可见。',
-  '此事有进益之势，然成迟，恐须过一重手续或候一音。当下宜备其分内，不宜强争；音至则易就。',
-];
-
-export function fewshotBlock(persona: PersonaId): string {
-  const list = persona === 'xiansheng' ? FEWSHOT_XIANSHENG : FEWSHOT_FEIYU;
+export function fewshotBlock(): string {
   return [
     '【口吻示例（只学语气与句式，禁止照抄示例里的具体事项）】',
-    ...list.map((s, i) => `${i + 1}. ${s}`),
+    ...FEWSHOT_FEIYU.map((s, i) => `${i + 1}. ${s}`),
   ].join('\n');
 }
 

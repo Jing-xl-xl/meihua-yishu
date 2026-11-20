@@ -26,14 +26,32 @@ export function retrieve(
     query.category,
   ].filter((x): x is string => Boolean(x));
 
+  const now = Date.now();
+  const scoreOf = (m: MemoryEntry): number => {
+    let score = 0;
+    const body = JSON.stringify(m.payload);
+    for (const k of keys) {
+      if (m.tags.some((t) => t.includes(k))) score += 3;
+      if (body.includes(k)) score += 1;
+    }
+    // 时间衰减：90 天内线性，越新越高
+    const t = Date.parse(m.createdAt);
+    if (!Number.isNaN(t)) {
+      const days = (now - t) / 86400000;
+      score += Math.max(0, 1 - days / 90) * 2;
+    }
+    // 类型权重：偏好/锚点比流水更值得被想起
+    if (m.type === 'preference' || m.type === 'anchor') score += 1;
+    return score;
+  };
+
   const hits = all.filter((m) => {
     if (keys.length === 0) return true;
     const tagHit = m.tags.some((t) => keys.some((k) => t.includes(k)));
     const body = JSON.stringify(m.payload);
-    const bodyHit = keys.some((k) => body.includes(k));
-    return tagHit || bodyHit;
+    return tagHit || keys.some((k) => body.includes(k));
   });
 
-  hits.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  hits.sort((a, b) => scoreOf(b) - scoreOf(a));
   return hits.slice(0, limit);
 }

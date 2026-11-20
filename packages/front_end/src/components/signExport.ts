@@ -10,6 +10,10 @@ export type SignExportData = {
   brief?: string;
   showDisclaimer?: boolean;
   disclaimer?: string;
+  /** 落款（干支年·季），可选 */
+  colophon?: string;
+  /** 签号（第 N 签），可选 */
+  signNo?: number;
 };
 
 const PAPER = '#f6f0e4';
@@ -45,7 +49,7 @@ function drawVerticalText(
 /** 将签面绘入 canvas 并触发下载 */
 export async function exportSignPng(data: SignExportData): Promise<void> {
   const W = 360;
-  const H = 620;
+  const H = 680;
   const scale = 2;
   const canvas = document.createElement('canvas');
   canvas.width = W * scale;
@@ -108,20 +112,21 @@ export async function exportSignPng(data: SignExportData): Promise<void> {
   const yaoH = 11;
   const gap = 10;
   const groupH = 6 * yaoH + 5 * gap;
-  const groupTop = 150;
-  const ringR = yaoW * 0.68;
+  const groupTop = 170;
+  const ringRx = 120;
+  const ringRy = 76;
   const ringCx = W / 2;
   const ringCy = groupTop + groupH / 2;
 
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(28,24,20,0.12)';
   ctx.lineWidth = 1;
-  ctx.arc(ringCx, ringCy, ringR, 0, Math.PI * 2);
+  ctx.ellipse(ringCx, ringCy, ringRx, ringRy, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.beginPath();
   ctx.setLineDash([2, 7]);
   ctx.strokeStyle = 'rgba(28,24,20,0.1)';
-  ctx.arc(ringCx, ringCy, ringR - 12, 0, Math.PI * 2);
+  ctx.ellipse(ringCx, ringCy, ringRx - 10, ringRy - 8, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -135,20 +140,6 @@ export async function exportSignPng(data: SignExportData): Promise<void> {
       ctx.fillRect(yaoX, y, seg, yaoH);
       ctx.fillRect(yaoX + yaoW - seg, y, seg, yaoH);
     }
-    if (row.moving) {
-      const tag = data.movingLabel || `动${row.pos}`;
-      ctx.font = `600 12px ${FONT_SERIF}`;
-      ctx.fillStyle = CINNABAR;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      const tx = ringCx + ringR + 12;
-      const ty = y + yaoH / 2;
-      const tw = ctx.measureText(tag).width + 10;
-      ctx.strokeStyle = CINNABAR;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(tx, ty - 11, tw, 22);
-      ctx.fillText(tag, tx + 5, ty);
-    }
   });
 
   // 卦名 + 金线
@@ -158,6 +149,24 @@ export async function exportSignPng(data: SignExportData): Promise<void> {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(data.guaName || '—', W / 2, nameY);
+  if (data.movingLabel) {
+    const nameW = ctx.measureText(data.guaName || '—').width;
+    const tag = data.movingLabel;
+    ctx.font = `600 11px ${FONT_SERIF}`;
+    const tw = ctx.measureText(tag).width + 12;
+    const tx = Math.min(W - 40 - tw, W / 2 + nameW / 2 + 10);
+    const ty = nameY - 11;
+    ctx.strokeStyle = CINNABAR;
+    ctx.fillStyle = 'rgba(178,58,46,0.10)';
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(tx, ty, tw, 22);
+    ctx.strokeRect(tx, ty, tw, 22);
+    ctx.fillStyle = CINNABAR;
+    ctx.textAlign = 'center';
+    ctx.fillText(tag, tx + tw / 2, ty + 12);
+    ctx.textAlign = 'center';
+    ctx.font = `600 22px ${FONT_SERIF}`;
+  }
   ctx.fillStyle = GOLD;
   ctx.fillRect(W / 2 - 40, nameY + 18, 80, 1.5);
 
@@ -173,12 +182,12 @@ export async function exportSignPng(data: SignExportData): Promise<void> {
   if (lower) {
     drawVerticalText(ctx, lower, W / 2 - 36, poemTop, fs, INK);
     ctx.fillStyle = CINNABAR;
-    ctx.fillRect(W / 2 - 8, poemTop + 40, 16, 16);
-    ctx.font = `600 10px ${FONT_SERIF}`;
-    ctx.fillStyle = CINNABAR;
+    ctx.fillRect(W / 2 - 9, poemTop + 40, 18, 18);
+    ctx.font = `600 11px ${FONT_SERIF}`;
+    ctx.fillStyle = PAPER;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('诗', W / 2, poemTop + 48);
+    ctx.fillText('诗', W / 2, poemTop + 49);
   }
 
   // 跋
@@ -189,6 +198,18 @@ export async function exportSignPng(data: SignExportData): Promise<void> {
   ctx.moveTo(28, footY);
   ctx.lineTo(W - 28, footY);
   ctx.stroke();
+  if (data.colophon) {
+    ctx.font = `10px ${FONT_SERIF}`;
+    ctx.fillStyle = '#8a8175';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      data.signNo ? `${data.colophon} · 第${data.signNo}签` : data.colophon,
+      W - 30,
+      footY + 21,
+    );
+    ctx.textAlign = 'left';
+  }
   if (data.brief) {
     ctx.fillStyle = CINNABAR;
     ctx.fillRect(32, footY + 12, 18, 18);

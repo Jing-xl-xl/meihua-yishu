@@ -2,6 +2,8 @@ export type Accuracy = 'yes' | 'partial' | 'no';
 
 export type StatsResult = {
   total: number;
+  /** 已出过占断（verdict）的案例数：签号口径 */
+  signed: number;
   filled: number;
   accuracyDist: { yes: number; partial: number; no: number };
   /** filled=0 → null；公式 (yes*1 + partial*0.5 + no*0) / filled */
@@ -16,14 +18,17 @@ export function computeStats(rows: {
   cast_method: string | null;
   category?: string | null;
   deviation_steps?: number[] | null;
+  signed?: boolean;
 }[]): StatsResult {
   let yes = 0;
   let partial = 0;
   let no = 0;
+  let signed = 0;
   const byMethod: Record<string, number> = {};
   const byDeviationStep: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
   for (const r of rows) {
+    if (r.signed) signed++;
     if (r.cast_method) {
       byMethod[r.cast_method] = (byMethod[r.cast_method] ?? 0) + 1;
     }
@@ -43,6 +48,7 @@ export function computeStats(rows: {
     filled === 0 ? null : (yes * 1 + partial * 0.5 + no * 0) / filled;
   return {
     total: rows.length,
+    signed,
     filled,
     accuracyDist: { yes, partial, no },
     composite,

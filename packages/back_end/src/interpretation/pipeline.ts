@@ -23,9 +23,16 @@ import {
   isLiuXiangEmpty,
 } from './liuxiangBrief';
 import {
-  buildPersonaSystem,
+  buildCharacterSystem,
+  normalizeTone,
+  validateFeiyuVoice,
   type PersonaId,
 } from './prompts/persona';
+import {
+  fallbackAsk,
+  pickBackgroundAsk,
+  type AskSpec,
+} from './background';
 import {
   STEP2_SYSTEM,
   STEP3_SYSTEM,
@@ -41,7 +48,7 @@ import type { TiYongRelation } from '@meihua/shared';
 
 export const locks = new CaseLocks();
 
-const MAX_BACKGROUND = 3;
+const MAX_BACKGROUND = 2;
 const MAX_LLM_RETRY = 2;
 
 type JsonStepOut = {
@@ -69,6 +76,7 @@ async function llmStep(
         temperature: PARAMS.step.temperature,
         maxTokens: PARAMS.step.maxTokens,
         onDelta,
+        signal: deps.signal,
       });
       const json = r.json ?? tryParseJsonText(r.text);
       if (json && typeof json === 'object') {
@@ -134,6 +142,9 @@ async function withSignPoem(
     llm: import('../llm/types').LLMProvider;
     offline?: boolean;
     emit?: import('./types').Emit;
+    signal?: AbortSignal;
+    tone?: string;
+    memoryPrompt?: string;
   },
   steps: StepState[],
 ) {
@@ -147,6 +158,10 @@ async function withSignPoem(
     stepConclusions: steps
       .filter((s) => s.conclusion)
       .map((s) => s.conclusion),
+    signal: opts.signal,
+    tone: opts.tone,
+    memoryPrompt: opts.memoryPrompt,
+    steps,
     onSummaryDelta: (t) => {
       opts.emit?.({
         type: 'verdict_delta',
@@ -158,6 +173,7 @@ async function withSignPoem(
   return attachSignPoem(enriched, {
     llm: opts.llm,
     offline: opts.offline,
+    signal: opts.signal,
     question: opts.case.input.question ?? '',
     benName: opts.cast.ben.name,
     movingYao: opts.cast.movingYao,
@@ -188,6 +204,7 @@ async function runOneStep(
   ctx: StepContext,
   deps: RunDeps,
 ): Promise<StepState> {
+  ensureAlive(deps);
   const { cast, knowledge: k, offline } = ctx;
 
   // 规则步
@@ -226,6 +243,15 @@ async function runOneStep(
     `【知识依据】${knowledgeLine}`,
     ...(liuxiangBlock ? [liuxiangBlock] : []),
     `卦辞摘要：${k.guaCi(cast.ben.kingwen).slice(0, 80)}`,
+    ...(isXiantian(cast.method)
+      ? []
+      : [`动爻爻辞：${k.lineText(cast.ben.kingwen, cast.movingYao)}`]),
+    ...(stepId === 8
+      ? [
+          `互卦：${cast.hu?.name ?? '—'}；变卦：${cast.bian.name}`,
+          '互看过程、变看结果；请给出可复核的依据（互/变与体的生克走向），不要只给形容词。',
+        ]
+      : []),
     ...ctx.prior.map((p) => `步骤${p.stepId}：${p.conclusion}`),
     ...(ctx.backgroundNotes.length
       ? [`背景：${ctx.backgroundNotes.join('；')}`]
@@ -235,8 +261,7 @@ async function runOneStep(
       : []),
   ].join('\n');
 
-  const persona: PersonaId =
-    (deps as { persona?: PersonaId }).persona ?? 'feiyu';
+  const tone = normalizeTone((deps as { tone?: string }).tone);
   const systems: Record<number, string> = {
     2: STEP2_SYSTEM,
     3: STEP3_SYSTEM,
@@ -254,7 +279,7 @@ async function runOneStep(
     const out = await llmStep(
       deps,
       [
-        buildPersonaSystem({ persona, tone: (deps as { tone?: string }).tone }),
+        buildCharacterSystem({ stage: 'interpret', tone }),
         systems[stepId] ?? STEP7_SYSTEM,
         REFUSAL_SOFTENER,
       ].join('\n'),
@@ -287,12 +312,17 @@ async function runOneStep(
       reasoningNote: truncateReasoning(plainText(String(out.reasoningNote ?? ''))),
       updatedAt: new Date().toISOString(),
     };
-    // P0 机检：主结论硬 tell → 降级为原句截断提示（完整重写留给占断层）
+    // P0 机检：命中只做记录（不把内部提示渲染给用户；完整重写留给占断层）
     const copy = validateCopy(state.conclusion, { where: `step${stepId}` });
-    if (!copy.ok) {
-      const note = copy.hits.map((h) => h.token).join('/');
-      state.reasoningNote = truncateReasoning(
-        `${state.reasoningNote ?? ''}（文案提示：${note}）`.trim(),
+    const voice = validateFeiyuVoice(state.conclusion);
+    if (!voice.ok && process.env.NODE_ENV !== 'test') {
+      console.warn(
+        `[feiyuVoice] step${stepId} 命中：${voice.hits.join('/')}`,
+      );
+    }
+    if (!copy.ok && process.env.NODE_ENV !== 'test') {
+      console.warn(
+        `[copyCheck] step${stepId} 命中：${copy.hits.map((h) => h.token).join('/')}`,
       );
     }
     // D-2 降级标注（W7：缺文件返回空 bag）
@@ -301,19 +331,13 @@ async function runOneStep(
         state.conclusion += '（类目库待补）';
       }
     }
-    if (stepId === 9) {
-      try {
-        void (k as { dongJingChiSu?: unknown }).dongJingChiSu;
-      } catch {
-        /* noop */
-      }
-      if (state.conclusion && !state.conclusion.includes('待补')) {
-        // 若无 dongjing 查询 API，标注细则待补（M3）
-        state.conclusion += '（动静应期细则待补）';
-      }
-    }
+    // 步 9：不动静细则数据时，由 prompt 内约束“按卦气与动爻给粗应期”，不再硬拼待补句
+
     return state;
   } catch (e) {
+    if (deps.signal?.aborted) {
+      throw new AppError('LLM_ABORT', 'client aborted');
+    }
     if (isKeyError(e)) {
       return markNeedKey(stepId, 'API Key 不可用');
     }
@@ -345,116 +369,91 @@ function saveAndEmitStep(
   }
 }
 
-/** W8 U4：按 category/问题选背景问（MAX_BACKGROUND 仍=3，G 定案） */
-function pickBackgroundQuestion(
-  stepId: number,
+/** 客户端已断开：立即中止并释放锁（避免幽灵跑与重复写库） */
+function ensureAlive(deps: { signal?: AbortSignal }): void {
+  if (deps.signal?.aborted) {
+    throw new AppError('LLM_ABORT', 'client aborted');
+  }
+}
+
+/** 起卦前已问过（precast）：步 3 不再重复问 */
+function precastAsked(deps: RunDeps): boolean {
+  try {
+    const msgs = deps.store.listMessages(deps.case.sessionId, deps.case.id);
+    return msgs.some(
+      (m) => m.role === 'system' && m.content.startsWith('__bg_asked__:precast'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 是否该在此步问背景（幂等 + 次数上限 + 槽位） */
+function shouldAsk(
+  deps: RunDeps,
+  stepId: 3 | 7,
+  asked: number,
   ctx: { question: string; category?: string },
-  askedQs: string[],
-): { question: string; options: string[] } | null {
-  const q = ctx.question || '';
-  const cat = ctx.category ?? '';
-  const hit = (s: string) => cat.includes(s) || q.includes(s);
-  const table: Array<{
-    keys: string[];
-    s3: { question: string; options: string[] };
-    s7: { question: string; options: string[] };
-  }> = [
-    {
-      keys: ['面试', '工作', '事业', '升职', '跳槽', '财'],
-      s3: {
-        question: '目前准备到什么程度？最担心哪一环？',
-        options: ['准备充分', '一般', '还没开始'],
-      },
-      s7: {
-        question: '你更在意过程表现还是最终结果？',
-        options: ['结果', '过程', '都在意'],
-      },
-    },
-    {
-      keys: ['找', '寻', '丢', '失'],
-      s3: {
-        question: '大约何时不见？是常用物还是偶然带的？',
-        options: ['今日', '近日', '很久了'],
-      },
-      s7: {
-        question: '更急找回，还是想知大概去向？',
-        options: ['找回', '去向', '随缘'],
-      },
-    },
-    {
-      keys: ['婚', '恋', '爱', '对象', '复合'],
-      s3: {
-        question: '是想问发展，还是想问要不要继续？',
-        options: ['发展', '是否继续', '对方态度'],
-      },
-      s7: {
-        question: '此事你最想确认哪一点？',
-        options: ['态度', '时机', '结果'],
-      },
-    },
-    {
-      keys: ['病', '健康', '不适', '心惊', '身体', '睡眠'],
-      s3: {
-        question: '是偶发还是已持续几日？近日睡眠或压力如何？',
-        options: ['偶发', '已持续', '说不清'],
-      },
-      s7: {
-        question: '更担心原因，还是何时缓解？',
-        options: ['原因', '何时好', '都关心'],
-      },
-    },
-    {
-      keys: ['行', '出行', '旅', '迁', '搬家'],
-      s3: {
-        question: '是问该不该去，还是问是否顺利？',
-        options: ['该不该去', '是否顺利', '都有'],
-      },
-      s7: {
-        question: '目前最顾虑什么？',
-        options: ['安全', '花费', '时机'],
-      },
-    },
-  ];
-  let pack = table.find((t) => t.keys.some(hit));
-  if (!pack) {
-    pack = {
-      keys: [],
-      s3: {
-        question: '你与所问之事的关系是？（可跳过）',
-        options: ['当事者', '替人问', '旁观关心'],
-      },
-      s7: {
-        question: '此事更关心结果还是过程？',
-        options: ['结果', '过程', '都关心'],
-      },
-    };
+): AskSpec | null {
+  if (deps.offline) return null;
+  if (asked >= MAX_BACKGROUND) return null;
+  if (askedBefore(deps, stepId)) return null;
+  if (stepId === 3 && precastAsked(deps)) return null;
+  return pickBackgroundAsk(stepId, ctx, []) ?? fallbackAsk(stepId);
+}
+
+const BG_MARK = '__bg_asked__:';
+
+function bgMarker(stepId: StepId): string {
+  return `${BG_MARK}${stepId}`;
+}
+
+/** 该案例是否已问过某步的背景（持久化在 messages，跨 run / resume 幂等） */
+function askedBefore(deps: RunDeps, stepId: StepId): boolean {
+  try {
+    const msgs = deps.store.listMessages(deps.case.sessionId, deps.case.id);
+    return msgs.some(
+      (m) => m.role === 'system' && m.content.startsWith(bgMarker(stepId)),
+    );
+  } catch {
+    return false;
   }
-  const picked = stepId === 3 ? pack.s3 : pack.s7;
-  if (askedQs.includes(picked.question)) {
-    const alt = stepId === 3 ? pack.s7 : pack.s3;
-    if (!askedQs.includes(alt.question)) return alt;
-    return null;
+}
+
+function markAsked(deps: RunDeps, stepId: StepId): void {
+  try {
+    deps.store.appendMessage({
+      sessionId: deps.case.sessionId,
+      caseId: deps.case.id,
+      role: 'system',
+      content: bgMarker(stepId),
+    });
+  } catch {
+    /* 标记失败不阻断主流程 */
   }
-  return picked;
 }
 
 function askBackground(
-  stepId: StepId,
-  question: string,
+  spec: AskSpec,
   deps: RunDeps,
   asked: number,
-  options?: string[],
 ): boolean {
   if (asked >= MAX_BACKGROUND) return false;
+  markAsked(deps, spec.stepId);
   deps.emit({
     type: 'need_input',
     caseId: deps.case.id,
     data: {
-      stepId,
-      question: plainText(question),
-      options: [...(options ?? []), '跳过'].filter(
+      stepId: spec.stepId,
+      slot: spec.slot,
+      question: plainText(spec.question),
+      why: plainText(spec.why),
+      examples: spec.examples.map((x) => plainText(x)),
+      suggested: spec.suggested.map((x) => plainText(x)),
+      options: [...spec.suggested, '跳过'].filter(
         (v, i, a) => a.indexOf(v) === i,
       ),
+      canSkip: true,
     },
   });
   return true;
@@ -467,7 +466,6 @@ export async function runInterpret(
   locks.acquire(caseId);
   const stepMap = new Map<number, StepState>();
   const backgroundNotes: string[] = [];
-  const askedQs: string[] = [];
   const offline = opts.offline ?? false;
   const skip6 = isXiantian(opts.cast.method);
 
@@ -477,7 +475,10 @@ export async function runInterpret(
       case: opts.case,
       cast: opts.cast,
       prior: [],
-      backgroundNotes,
+      backgroundNotes: [
+        ...(opts.case.input.contextNote ? [opts.case.input.contextNote] : []),
+        ...backgroundNotes,
+      ],
       personMemories: opts.personMemories ?? [],
       knowledge: opts.knowledge,
       offline,
@@ -491,26 +492,17 @@ export async function runInterpret(
     const wang = tiWangShuai(opts.cast, opts.knowledge);
 
     for (const id of STEP_IDS) {
+      ensureAlive(opts);
       if (id < from) continue;
       ctx.prior = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
 
-      // 背景提问：步 3 / 7（M3：发 need_input 后立即返回）
-      if ((id === 3 || id === 7) && !offline && asked < MAX_BACKGROUND) {
-        const bg = pickBackgroundQuestion(
-          id,
-          {
-            question: opts.case.input.question ?? '',
-            category: opts.case.input.category,
-          },
-          askedQs,
-        );
-        const q =
-          bg?.question ??
-          (id === 3
-            ? '求卦人与所问之事的关系是？（可跳过）'
-            : '此事更关心结果还是过程？（可跳过）');
-        if (bg) askedQs.push(bg.question);
-        if (askBackground(id, q, opts, asked, bg?.options)) {
+      // 背景提问：步 3 / 7（M3：发 need_input 后立即返回）；每案例每步只问一次
+      if ((id === 3 || id === 7) && !opts.fromStep) {
+        const ask = shouldAsk(opts, id, asked, {
+          question: opts.case.input.question ?? '',
+          category: opts.case.input.category,
+        });
+        if (ask && askBackground(ask, opts, asked)) {
           asked++;
           // 立即返回，锁由 finally 释放
           const partial: StepState[] = [...stepMap.values()].sort(
@@ -582,7 +574,10 @@ export async function resumeInterpret(
       case: opts.case,
       cast: opts.cast,
       prior: [],
-      backgroundNotes: notes,
+      backgroundNotes: [
+        ...(opts.case.input.contextNote ? [opts.case.input.contextNote] : []),
+        ...notes,
+      ],
       personMemories: opts.personMemories ?? [],
       knowledge: opts.knowledge,
       offline,
@@ -593,10 +588,33 @@ export async function resumeInterpret(
     let relation: TiYongRelation = ruleStep4(opts.cast, opts.knowledge).relation;
     const wang = tiWangShuai(opts.cast, opts.knowledge);
 
+    let asked = 0;
     for (const id of STEP_IDS) {
+      ensureAlive(opts);
       if (id < from) continue;
       ctx.prior = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
-      // resume 后不再对同一轮重复 need_input（已过提问点）
+
+      // 步 7 的背景问在续跑路径补上；步 3 已问过（marker 幂等，不会重复问）
+      if (id === 3 || id === 7) {
+        const ask = shouldAsk(opts, id, asked, {
+          question: opts.case.input.question ?? '',
+          category: opts.case.input.category,
+        });
+        if (ask && askBackground(ask, opts, asked)) {
+          asked++;
+          const partial: StepState[] = [...stepMap.values()].sort(
+            (a, b) => a.stepId - b.stepId,
+          );
+          const partialVerdict = composeVerdict({
+            steps: partial,
+            relation,
+            wangShuai: wang,
+            category: ctx.category,
+          });
+          return { steps: partial, verdict: partialVerdict, done: false };
+        }
+      }
+
       const state = await runOneStep(id, ctx, opts);
       saveAndEmitStep(state, opts, stepMap);
       if (id === 4) {
@@ -643,7 +661,10 @@ export async function reviseInterpret(
       case: opts.case,
       cast: opts.cast,
       prior: [],
-      backgroundNotes: [opts.message],
+      backgroundNotes: [
+        ...(opts.case.input.contextNote ? [opts.case.input.contextNote] : []),
+        opts.message,
+      ],
       personMemories: opts.personMemories ?? [],
       knowledge: opts.knowledge,
       offline,
@@ -655,6 +676,7 @@ export async function reviseInterpret(
     const wang = tiWangShuai(opts.cast, opts.knowledge);
 
     for (const id of STEP_IDS) {
+      ensureAlive(opts);
       if (id < opts.stepId) continue;
       ctx.prior = [...stepMap.values()].sort((a, b) => a.stepId - b.stepId);
       const base = await runOneStep(id, ctx, opts);
@@ -696,15 +718,23 @@ export async function answerFollowUp(opts: {
   memoryPrompt?: string;
   persona?: PersonaId;
   emit?: import('./types').Emit;
+  signal?: AbortSignal;
 }): Promise<{ text: string }> {
   if (opts.offline) {
     throw new AppError('NO_API_KEY', 'follow-up requires api key');
   }
   try {
     const caseId = opts.case.id;
+    const stepBrief = (opts.steps ?? [])
+      .filter((s) => s.conclusion)
+      .map((s) => `步骤${s.stepId}：${s.conclusion}`)
+      .slice(0, 4)
+      .join('\n');
+    const tone = normalizeTone((opts as { tone?: string }).tone);
     const user = [
       `问题：${opts.question}`,
       `本卦：${opts.cast.ben.name}之${opts.cast.bian?.name ?? ''}，动${opts.cast.movingYao}`,
+      stepBrief ? `已断九步（只作依据，勿复述）：\n${stepBrief}` : '',
       opts.memoryPrompt ?? '',
     ]
       .filter(Boolean)
@@ -712,10 +742,11 @@ export async function answerFollowUp(opts: {
     let deltas = 0;
     const r = await opts.llm.streamChat({
       system: [
-        buildPersonaSystem({ persona: opts.persona }),
-        '同一卦补充解读，不重起卦。只用纯文本，禁止 Markdown 符号。',
+        buildCharacterSystem({ stage: 'followup', tone }),
+        '同一卦补充解读，不重起卦、不改九步结论。只用纯文本，禁止 Markdown 符号。',
       ].join('\n'),
       messages: [{ role: 'user', content: user }],
+      signal: opts.signal,
       onDelta: (t) => {
         deltas += 1;
         opts.emit?.({

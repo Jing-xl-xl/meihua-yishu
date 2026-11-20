@@ -5,12 +5,12 @@ export type { ProfileAxes };
 /** 画像六维雷达（规格 §6.2b）· 纯 SVG，纸墨风 */
 
 const AXES: Array<{ key: keyof ProfileAxes; label: string }> = [
-  { key: 'focus', label: '聚焦' },
-  { key: 'lost', label: '寻物' },
-  { key: 'work', label: '事功' },
-  { key: 'brief', label: '简洁' },
-  { key: 'feedback', label: '回填' },
-  { key: 'params', label: '参数' },
+  { key: 'social', label: '交游' },
+  { key: 'caution', label: '持重' },
+  { key: 'agency', label: '躬行' },
+  { key: 'explore', label: '远志' },
+  { key: 'home', label: '安宅' },
+  { key: 'mood', label: '心绪' },
 ];
 
 function point(
@@ -38,7 +38,7 @@ export function ProfileRadar({
   const grid = [0.33, 0.66, 1];
   const empty = isAxesEmpty(axes);
 
-  const vals = AXES.map((a) => Number(axes?.[a.key] ?? 0));
+  const vals = AXES.map((a) => Number(axes?.[a.key] ?? 50));
   const poly = vals
     .map((v, i) => {
       const r = (Math.max(0, Math.min(100, v)) / 100) * R;
@@ -106,6 +106,8 @@ export function ProfileRadar({
           </text>
         ) : (
           <polygon
+            key={poly}
+            className="radar-shape"
             points={poly}
             fill="rgba(178, 58, 46, 0.12)"
             stroke="var(--cinnabar)"
@@ -113,7 +115,7 @@ export function ProfileRadar({
           />
         )}
       </svg>
-      <p className="hint radar-note">N={caseCount}，形态参考</p>
+      <p className="hint radar-note">N={caseCount}，对话倾向参考（非人格诊断）</p>
     </div>
   );
 }

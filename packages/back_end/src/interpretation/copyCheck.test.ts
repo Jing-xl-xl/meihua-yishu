@@ -18,8 +18,8 @@ describe('copyCheck tell tiers', () => {
     expect(startsWithTerm('东西还在家里')).toBe(false);
   });
 
-  it('fewshot has both personas', () => {
-    expect(fewshotBlock('feiyu')).toContain('只学语气');
-    expect(fewshotBlock('xiansheng')).toContain('多半未离');
+  it('fewshot is single feiyu voice', () => {
+    expect(fewshotBlock()).toContain('只学语气');
+    expect(fewshotBlock()).toContain('我赌');
   });
 });

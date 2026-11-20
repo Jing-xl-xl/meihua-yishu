@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   apiClient,
+  errText,
   streamSse,
   type CastResult,
   type Person,
@@ -11,7 +12,10 @@ import {
 import { PERSON_TO_GUA } from '../api/methods';
 import { HexBoard, GUA_ORDER, dualToLines, guaZh } from '../components/HexBoard';
 import { SignModal } from '../components/SignModal';
-import { CasesPage, KnowledgePage, MemoryPage, SettingsPage } from '../features/pages';
+import { SignBoard } from '../components/SignBoard';
+import { KnowledgePage, SettingsPage } from '../features/pages';
+import { JournalPage } from '../features/journal/JournalPage';
+import { PreviewPage } from '../features/preview/PreviewPage';
 import { ToastHost, toast } from '../components/ui';
 import { ZHI_BY_NUM, GUA_NAME_ZH, qiSegments, qiTrendPlain, elementZh } from '@meihua/shared';
 import {
@@ -20,6 +24,7 @@ import {
   gradeClass,
   gradeLabel,
 } from './labels';
+import { NAV_ROUTES, useRoute } from './routes';
 
 const PERSON_KEY = 'meihua.personId';
 
@@ -27,10 +32,39 @@ type ChatMsg = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  kind?: 'cast' | 'step' | 'verdict' | 'need' | 'error' | 'followup';
+  kind?: 'cast' | 'step' | 'verdict' | 'need' | 'error' | 'followup' | 'note';
 };
 
-type NeedInput = { stepId?: number; question: string; options?: string[] };
+type NeedInput = {
+  stepId?: number;
+  question: string;
+  options?: string[];
+  slot?: string;
+  why?: string;
+  examples?: string[];
+  suggested?: string[];
+  canSkip?: boolean;
+};
+
+/** 暂停时：为什么问（说人话，避免用户觉得被盘问） */
+function needWhy(stepId?: number): string {
+  if (stepId === 3) {
+    return '问这个是为了定体用（谁主谁客），只影响后面怎么解释，不改吉凶档位。';
+  }
+  if (stepId === 7) {
+    return '问这个是为了把类象落到具体人事，后面才断得准。';
+  }
+  return '问这个是为了把话说准，不改卦与档位。';
+}
+
+/** 暂停时：给 2～3 个“可以这样说”的示例，降低用户表达成本 */
+function needExamples(need: NeedInput): string {
+  const opts = (need.options ?? []).filter((o) => o !== '跳过');
+  const base = opts.length
+    ? opts.map((o) => `「${o}」`).join('、')
+    : '「我也不确定」';
+  return `${base} 都可以；也可以用自己的话说一句，或直接跳过。`;
+}
 
 type MethodId =
   | 'number3'
@@ -166,6 +200,26 @@ function schoolHint(method: MethodId): string {
 
 export function App() {
   const [persons, setPersons] = useState<Person[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signNo, setSignNo] = useState<number | null>(null);
+  const [summaryStream, setSummaryStream] = useState('');
+  /** 回看历史案例：只读，不追问 */
+  const [replay, setReplay] = useState(false);
+  const [caseStage, setCaseStage] = useState<string | null>(null);
+  const [precastAsk, setPrecastAsk] = useState<{
+    question: string;
+    why?: string;
+    examples?: string[];
+    suggested?: string[];
+    slot?: string;
+  } | null>(null);
+  const [precastPending, setPrecastPending] = useState<{
+    sid: string;
+    cid: string;
+    body: Record<string, unknown>;
+  } | null>(null);
+  const [precastAnswer, setPrecastAnswer] = useState('');
+  const [newPersonName, setNewPersonName] = useState('');
   const [personId, setPersonId] = useState<string | null>(
     localStorage.getItem(PERSON_KEY),
   );
@@ -173,7 +227,6 @@ export function App() {
   const [caseId, setCaseId] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const [hasKey, setHasKey] = useState(false);
-  const [kbVersion, setKbVersion] = useState('');
   const [schoolMoving, setSchoolMoving] = useState<'mod' | 'sum'>('mod');
   const [backendDown, setBackendDown] = useState(false);
   const [running, setRunning] = useState(false);
@@ -230,14 +283,12 @@ export function App() {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
   const [followExpanded, setFollowExpanded] = useState(false);
   const [chatPinned, setChatPinned] = useState(true);
-  const [hexFull, setHexFull] = useState(false);
+  const [hexFull, setHexFull] = useState(true);
   const [verdictOpen, setVerdictOpen] = useState(false);
   const [signOpen, setSignOpen] = useState(false);
   const [status, setStatus] = useState('');
   const [formError, setFormError] = useState('');
-  const [page, setPage] = useState<
-    'work' | 'cases' | 'memory' | 'knowledge' | 'settings'
-  >('work');
+  const [route, go] = useRoute();
   const [recentCases, setRecentCases] = useState<
     Array<{
       id: string;
@@ -250,6 +301,8 @@ export function App() {
   const abortRef = useRef<AbortController | null>(null);
   const summaryStreamBufRef = useRef('');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatBoxRef = useRef<HTMLDivElement>(null);
+  const [streamMsgId, setStreamMsgId] = useState<string | null>(null);
 
   const pushChat = useCallback((m: Omit<ChatMsg, 'id'>) => {
     setChat((c) => [
@@ -258,13 +311,21 @@ export function App() {
     ]);
   }, []);
 
+  const pushNote = useCallback(
+    (content: string) => pushChat({ role: 'assistant', kind: 'note', content }),
+    [pushChat],
+  );
+
+  const note3Ref = useRef(false);
+  const note6Ref = useRef(false);
+
   const applyStep = useCallback((st: StepState) => {
     setSteps((prev) => {
       const next = prev.filter((s) => s.stepId !== st.stepId);
       return [...next, st].sort((a, b) => a.stepId - b.stepId);
     });
-    // R-6：revise 后自动展开该步
-    if (st.status === 'revised') {
+    // R-6：revise 后自动展开该步；失败步也展开，露出「重试本步」
+    if (st.status === 'revised' || st.status === 'failed') {
       setExpandedStep(st.stepId);
     }
   }, []);
@@ -281,14 +342,21 @@ export function App() {
         setBackendDown(false);
         const sch = (s as unknown as { school?: string }).school;
         if (sch === 'mod' || sch === 'sum') setSchoolMoving(sch);
-        const kb = (s as unknown as { kbVersion?: string }).kbVersion;
-        if (kb) setKbVersion(kb);
       } catch {
         setBackendDown(true);
-        setStatus('后端未启动（npm run dev:api）');
+        setStatus('后端服务未启动');
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
 
   useEffect(() => {
     if (!personId) return;
@@ -352,9 +420,10 @@ export function App() {
   }, [sessionId, caseId]);
 
   useEffect(() => {
-    // R-4/R-5：仅贴底时跟滚；历史载入不强制
+    // R-4/R-5：仅贴底时跟滚；只滚聊天容器内部，绝不带动整页
     if (!chatPinned) return;
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = chatBoxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [chat, chatPinned]);
 
   function onChatScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -379,6 +448,10 @@ export function App() {
   }
 
   function resetWorkbench() {
+    setCaseStage(null);
+    note3Ref.current = false;
+    note6Ref.current = false;
+    setReplay(false);
     setSessionId(null);
     setCaseId(null);
     setCast(null);
@@ -392,22 +465,66 @@ export function App() {
     setRouteHint('');
   }
 
-  async function newPerson() {
-    const name = window.prompt('姓名') || '测试';
+  async function createPerson(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return setStatus('先写个称呼，再建档案');
     try {
-      const r = await apiClient.createPerson(name);
+      const r = await apiClient.createPerson(trimmed);
       setPersons((x) => [...x, r.person]);
       pickPerson(r.person.id);
+      setNewPersonName('');
       setBackendDown(false);
+      toast('ok', `已建档案「${trimmed}」`);
     } catch (e) {
-      setStatus(String(e));
+      setStatus(errText(e));
+    }
+  }
+
+  /** 打开历史案例：恢复盘/九步/断语/对话（只读回放，可继续追问） */
+  async function openCase(id: string) {
+    try {
+      const b = await apiClient.getCase(id);
+      const c = b.case ?? {};
+      abortSse();
+      setCaseId(id);
+      if (c.sessionId) setSessionId(c.sessionId);
+      setQuestion(c.input?.question ?? '');
+      setCast(c.cast ?? null);
+      setSteps(b.steps ?? []);
+      setVerdict(c.verdict ?? null);
+      setLocked(!!c.cast);
+      setNeed(null);
+      setSignNo(null);
+      setSignOpen(false);
+      const isReplay = !!(c.cast && c.verdict);
+      setReplay(isReplay);
+      const hist = (b.messages ?? [])
+        .filter((m) => m.role !== 'system')
+        .map((m, i) => ({
+          id: m.id ?? `hist-${i}`,
+          role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+          content: m.content,
+        }));
+      setChat(hist);
+      setCaseStage((b as { stage?: string }).stage ?? null);
+      setStatus(isReplay ? '回看中（只读，不追问）' : '已载入历史案例');
+    } catch (e) {
+      toast('error', errText(e));
     }
   }
 
   function newSession() {
     abortSse();
+    setSignNo(null);
     resetWorkbench();
     setStatus('新会话（一事一占）');
+  }
+
+  /** 回看态 → 返回问卦（保留当前档案） */
+  function backToPrep() {
+    abortSse();
+    resetWorkbench();
+    setStatus('已返回问卦');
   }
 
   function parseNumbers(): number[] {
@@ -519,7 +636,7 @@ export function App() {
         // 不静默覆盖：仅提示可采纳
       }
     } catch (e) {
-      const msg = String(e);
+      const msg = errText(e);
       setStatus(msg);
       toast('error', msg);
     }
@@ -557,11 +674,12 @@ export function App() {
         toast('ok', `解析：${r.labels?.object ?? ''}→${r.objectGua}，${r.labels?.direction ?? ''}→${r.directionGua}`);
       }
     } catch (e) {
-      toast('error', String(e));
+      toast('error', errText(e));
     }
   }
 
   async function startCast() {
+    if (precastAsk) return;
     if (!personId) return setStatus('请先选择档案');
     const err = validateForm(
       method,
@@ -578,6 +696,7 @@ export function App() {
     setFormError(err);
     if (err) return;
     abortSse();
+    setReplay(false);
     setStatus('起卦中…');
     try {
       const sess =
@@ -608,47 +727,107 @@ export function App() {
           directionGua: dirParse.directionGua,
         };
       }
-      const r = await apiClient.cast(c.case.id, body);
-      setCast(r.cast);
-      setLocked(true);
-      setBackendDown(false);
-      pushChat({
-        role: 'assistant',
-        kind: 'cast',
-        content: `起卦：${r.cast.ben.name} 之 ${r.cast.bian.name}，动爻 ${r.cast.movingYao}（${schoolMoving === 'sum' ? '总和派' : '取模派'}·不含时）`,
-      });
-      setStatus(`已起卦：${r.cast.ben.name} 之 ${r.cast.bian.name}`);
-      toast('ok', `已起卦：${r.cast.ben.name} 之 ${r.cast.bian.name}`);
+      if (hasKey) {
+        const a = await apiClient
+          .getPrecastAsk(c.case.id)
+          .catch(() => ({ ask: null }));
+        if (a.ask) {
+          setPrecastAsk(a.ask);
+          setPrecastPending({ sid, cid: c.case.id, body });
+          setPrecastAnswer('');
+          setStatus('起卦前，先回答占者一句');
+          return;
+        }
+      }
+      await doCast(sid, c.case.id, body);
     } catch (e) {
-      setStatus(String(e));
-      pushChat({ role: 'system', kind: 'error', content: String(e) });
-      toast('error', String(e));
+      setStatus(errText(e));
+      pushChat({ role: 'system', kind: 'error', content: errText(e) });
+      toast('error', errText(e));
     }
   }
 
-  function runStream(url: string, body: unknown, onFrame: (f: SseFrame) => void) {
+  async function doCast(
+    sid: string,
+    cid: string,
+    body: Record<string, unknown>,
+    skipGreeting = false,
+  ) {
+    if (!skipGreeting && question.trim()) {
+      pushNote(`你问的是「${question.trim()}」。`);
+    }
+    const r = await apiClient.cast(cid, body);
+    setCast(r.cast);
+    setLocked(true);
+    setBackendDown(false);
+    pushNote(
+      `起了一卦：${r.cast.ben.name} 之 ${r.cast.bian.name}，动 ${r.cast.movingYao}。先看卦名，再看体用。`,
+    );
+    setStatus(`已起卦：${r.cast.ben.name} 之 ${r.cast.bian.name}`);
+    toast('ok', `已起卦：${r.cast.ben.name} 之 ${r.cast.bian.name}`);
+    void sid;
+  }
+
+  async function finishPrecast(skip: boolean) {
+    const p = precastPending;
+    if (!p || !precastAsk) return;
+    const ans = skip ? '' : precastAnswer.trim();
+    try {
+      await apiClient.precast(p.cid, { answer: ans, skip });
+      pushNote(
+        `你问的是「${question}」。起卦前我先多嘴问一句：${precastAsk.question}`,
+      );
+      if (ans) pushChat({ role: 'user', content: ans });
+      setPrecastAsk(null);
+      setPrecastPending(null);
+      setPrecastAnswer('');
+      await doCast(p.sid, p.cid, p.body, true);
+    } catch (e) {
+      toast('error', errText(e));
+    }
+  }
+
+  async function runStream(
+    url: string,
+    body: unknown,
+    onFrame: (f: SseFrame) => void,
+  ): Promise<boolean> {
     abortSse();
     const ac = new AbortController();
     abortRef.current = ac;
     setRunning(true);
-    return streamSse(url, body, onFrame, ac.signal)
-      .catch((e) => {
-        if (!String(e).includes('abort')) {
-          setStatus(String(e));
-          pushChat({ role: 'system', kind: 'error', content: String(e) });
-        }
-      })
-      .finally(() => {
+    let ok = false;
+    try {
+      await streamSse(url, body, onFrame, ac.signal);
+      ok = true;
+    } catch (e) {
+      if (!String(e).includes('abort')) {
+        setStatus(errText(e));
+        pushChat({ role: 'system', kind: 'error', content: errText(e) });
+      }
+    } finally {
+      // 只允许「当前流」结束后清 running，避免旧流覆盖新流
+      if (abortRef.current === ac) {
+        abortRef.current = null;
         setRunning(false);
-        if (abortRef.current === ac) abortRef.current = null;
-      });
+      }
+    }
+    return ok;
   }
 
-  async function interpret() {
+  async function interpret(fromStep?: number) {
     if (!caseId) return setStatus('请先起卦');
-    setStatus('解卦中…');
+    if (running) return;
+    if (need) return setStatus('先回答右侧的背景问题（或点「跳过并继续」）');
+    setStatus(fromStep ? `从第 ${fromStep} 步重算…` : '解卦中…');
     summaryStreamBufRef.current = '';
-    await runStream(`/api/cases/${caseId}/interpret`, {}, (f) => {
+    setSummaryStream('');
+    note3Ref.current = false;
+    note6Ref.current = false;
+    await runStream(
+      `/api/cases/${caseId}/interpret`,
+      fromStep ? { fromStep } : {},
+      (f) => {
       if (f.event === 'step_done' || f.event === 'step_revised') {
         const st = f.data as StepState;
         applyStep(st);
@@ -659,16 +838,34 @@ export function App() {
             content: `已修正步骤 ${st.stepId}`,
           });
         }
+        if (st.stepId === 3 && !note3Ref.current) {
+          note3Ref.current = true;
+          pushNote('体用定了，接着看生克。');
+        }
+        if (st.stepId === 6 && !note6Ref.current) {
+          note6Ref.current = true;
+          pushNote('卦辞爻辞看完了，接着看类象。');
+        }
       } else if (f.event === 'verdict') {
         const v = f.data as Verdict;
+        setSummaryStream('');
         setVerdict(v);
-        setVerdictOpen(true);
+        setVerdictOpen(false);
+        if (personId) {
+          void apiClient
+            .stats(personId)
+            .then((r) =>
+              setSignNo(Number(r.signed ?? r.total ?? 0) || null),
+            )
+            .catch(() => undefined);
+        }
         pushChat({
           role: 'assistant',
           kind: 'verdict',
           content: `占断（${gradeLabel(v.grade)}）：${v.summary}`,
         });
-        toast('ok', '已出签，可点阅签');
+        pushNote('签已出。要是愿意，我可以就「建议」再说细些；想问别的也行。');
+        toast('ok', '已出签，可点查看签诗');
       } else if (f.event === 'step_delta') {
         const d = f.data as {
           stepId?: number;
@@ -689,41 +886,44 @@ export function App() {
         if (d.field === 'summary' && d.text) {
           summaryStreamBufRef.current += d.text;
           const acc = summaryStreamBufRef.current;
+          setSummaryStream(acc);
           setVerdict((v) => (v ? { ...v, summary: acc } : v));
         }
       } else if (f.event === 'message_delta') {
         // followup 由 doFollowup 专管；interpret 路径忽略
       } else if (f.event === 'need_input') {
-        setNeed(f.data as NeedInput);
-        pushChat({
-          role: 'assistant',
-          kind: 'need',
-          content: (f.data as NeedInput).question,
-        });
+        const q = f.data as NeedInput;
+        setNeed(q);
+        setStatus('已暂停，等待你补充背景');
+        // 只保留一条「活」气泡；不再往历史里重复推送同一问题
       } else if (f.event === 'error') {
         const e = f.data as { code?: string; message?: string };
         pushChat({
           role: 'system',
           kind: 'error',
-          content: `${e.code ?? 'ERR'} ${e.message ?? ''}`,
+          content: errText(`${e.code ?? ''} ${e.message ?? ''}`),
         });
+      } else if (f.event === 'paused') {
+        setStatus('已暂停，等待你补充背景');
       } else if (f.event === 'done') {
         setStatus('解卦完成');
       }
-    });
+      },
+    );
   }
 
-  async function submitResume(skip = false) {
+  async function submitResume(skip = false, override?: string) {
     if (!caseId) return;
-    const textAns = skip ? '' : answer.trim();
-    if (!skip && !textAns) {
-      // 空提交等价跳过，但保留显式路径
-    }
+    if (running) return;
+    const textAns = skip ? '' : (override ?? answer).trim();
+    if (!skip && !textAns) return;
     if (!skip) pushChat({ role: 'user', content: textAns || '（空）' });
     else pushChat({ role: 'user', content: '（跳过背景）' });
+    pushNote(skip ? '行，那就先按现有的看。' : '好，记下了。接着往下看。');
+    const prevNeed = need;
     const stepId = need?.stepId;
     setNeed(null);
-    await runStream(
+    const ok = await runStream(
       `/api/cases/${caseId}/resume`,
       {
         // G：text 空串/「跳过」不进背景；stepId 保证从提问步续跑（勿传空 answers）
@@ -737,18 +937,40 @@ export function App() {
       },
       (f) => {
         if (f.event === 'step_done' || f.event === 'step_revised') {
-          applyStep(f.data as StepState);
+          const st = f.data as StepState;
+          applyStep(st);
+          if (st.stepId === 3 && !note3Ref.current) {
+            note3Ref.current = true;
+            pushNote('体用定了，接着看生克。');
+          }
+          if (st.stepId === 6 && !note6Ref.current) {
+            note6Ref.current = true;
+            pushNote('卦辞爻辞看完了，接着看类象。');
+          }
+        } else if (f.event === 'need_input') {
+          // 关键修复：续跑中可能再次暂停（步 7），必须重新进入待答态
+          setNeed(f.data as NeedInput);
+          setStatus('已暂停，等待你补充背景');
+        } else if (f.event === 'paused') {
+          setStatus('已暂停，等待你补充背景');
         } else if (f.event === 'verdict') {
           const v = f.data as Verdict;
+          setNeed(null);
           setVerdict(v);
           pushChat({
             role: 'assistant',
             kind: 'verdict',
             content: `占断（${gradeLabel(v.grade)}）：${v.summary}`,
           });
-        } else if (f.event === 'done') setStatus(skip ? '已跳过背景并继续' : '续跑完成');
+          pushNote('签已出。要是愿意，我可以就「建议」再说细些；想问别的也行。');
+        } else if (f.event === 'done')
+          setStatus(skip ? '已跳过背景并继续' : '续跑完成');
       },
     );
+    if (!ok && prevNeed) {
+      setNeed(prevNeed);
+      setStatus('提交失败，已保留问题，可重试');
+    }
     setAnswer('');
   }
 
@@ -782,6 +1004,10 @@ export function App() {
   }
 
   async function doFollowup() {
+    if (replay) {
+      setStatus('回看中不可追问；点「返回问卦」后可继续');
+      return;
+    }
     if (!caseId || !followText.trim() || running) return;
     setChatPinned(true);
     setFollowExpanded(false);
@@ -789,11 +1015,23 @@ export function App() {
     pushChat({ role: 'user', content: q });
     setFollowText('');
     let buf = '';
+    let lastPaint = 0;
     const msgId = `fu-${Date.now()}`;
+    setStreamMsgId(msgId);
     setChat((c) => [
       ...c,
       { id: msgId, role: 'assistant', kind: 'followup', content: '…' },
     ]);
+    const paint = (force = false) => {
+      const now = performance.now();
+      if (!force && now - lastPaint < 60) return;
+      lastPaint = now;
+      const text = plainText(buf);
+      if (!text) return;
+      setChat((c) =>
+        c.map((m) => (m.id === msgId ? { ...m, content: text } : m)),
+      );
+    };
     try {
       await runStream(
         `/api/cases/${caseId}/followup`,
@@ -802,12 +1040,8 @@ export function App() {
           if (f.event === 'message_delta') {
             const d = f.data as { text?: string };
             if (!d.text) return;
-            buf = buf === '…' ? d.text : buf + d.text;
-            setChat((c) =>
-              c.map((m) =>
-                m.id === msgId ? { ...m, content: plainText(buf) } : m,
-              ),
-            );
+            buf += d.text;
+            paint();
           } else if (f.event === 'error') {
             const e = f.data as { message?: string };
             const msg = e.message ?? '追问失败';
@@ -820,31 +1054,61 @@ export function App() {
           }
         },
       );
-      if (buf === '' || buf === '…') {
+      paint(true);
+      if (!buf) {
         setChat((c) =>
-          c.map((m) =>
-            m.id === msgId ? { ...m, content: '（未返回）' } : m,
-          ),
+          c.map((m) => (m.id === msgId ? { ...m, content: '（未返回）' } : m)),
         );
       }
       setBackendDown(false);
+      setStreamMsgId(null);
     } catch (e) {
       setChat((c) =>
         c.map((m) =>
-          m.id === msgId ? { ...m, content: `（未返回）${String(e)}` } : m,
+          m.id === msgId ? { ...m, content: `（未返回）${errText(e)}` } : m,
         ),
       );
-      toast('error', String(e));
+      toast('error', errText(e));
     }
   }
 
+  const stageKey = precastAsk
+    ? 'clarify'
+    : need
+      ? 'clarify'
+      : running
+        ? 'interpret'
+        : verdict
+          ? caseStage === 'close'
+            ? 'close'
+            : 'verdict'
+          : cast
+            ? 'cast'
+            : caseStage === 'clarify'
+              ? 'clarify'
+              : 'greet';
+  const STAGE_ZH: Record<string, string> = {
+    greet: '接问',
+    clarify: '澄清',
+    cast: '起卦',
+    interpret: '解卦',
+    verdict: '占断',
+    close: '收束',
+  };
+  const stageZh = STAGE_ZH[stageKey] ?? '接问';
+
   const phase: FlowPhase = verdict
     ? 'done'
-    : running
+    : running || need
       ? 'interpret'
       : locked
         ? 'cast'
         : 'prep';
+
+  // 断章起，盘收起为紧凑行（焦点让给九步与签）；用户仍可「放大看盘」
+  useEffect(() => {
+    if (verdict) setHexFull(false);
+  }, [verdict]);
 
   const doneCount = steps.filter(
     (s) => s.status !== 'pending' && s.status !== 'running',
@@ -910,24 +1174,19 @@ export function App() {
           梅花易数
         </h1>
         <div className="row">
-          <span className={`badge ${hasKey ? 'ok' : 'warn'}`}>
-            {hasKey ? '已配置 Key' : '未配置 Key'}
-          </span>
-          {kbVersion ? <span className="badge">KB {kbVersion}</span> : null}
-          <select
-            value={personId ?? ''}
-            onChange={(e) => pickPerson(e.target.value)}
-            style={{ width: 'auto' }}
+          <button
+            type="button"
+            className="ghost sm person-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen(true)}
           >
-            <option value="">选择档案</option>
-            {persons.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="ghost sm" onClick={() => void newPerson()}>
-            新建档案
+            <span className="person-trigger-name">
+              {persons.find((p) => p.id === personId)?.name ?? '选择档案'}
+            </span>
+            <span className="caret" aria-hidden>
+              ▾
+            </span>
           </button>
           <button type="button" className="ghost sm" onClick={newSession}>
             新事
@@ -936,44 +1195,117 @@ export function App() {
       </header>
 
       <nav className="tabs">
-        {(
-          [
-            ['work', '问卦'],
-            ['cases', '案例'],
-            ['memory', '记忆'],
-            ['knowledge', '知识'],
-            ['settings', '设置'],
-          ] as const
-        ).map(([p, label]) => (
+        {NAV_ROUTES.map(({ route: r, label }) => (
           <button
-            key={p}
+            key={r}
             type="button"
-            className={page === p ? 'active' : ''}
-            onClick={() => setPage(p)}
+            className={route === r ? 'active' : ''}
+            onClick={() => go(r)}
           >
             {label}
           </button>
         ))}
       </nav>
 
-      {backendDown && (
-        <div className="banner danger">
-          后端未启动或不可达（npm run dev:api）。起卦/解卦不可用。
-        </div>
-      )}
-      {!hasKey && page === 'work' && (
-        <div className="banner warn">
-          当前未配置 Key：可起卦排盘；步 1/3/4/5 规则可解，其余标「需配置 Key」。可在设置中配置。
+      {drawerOpen && (
+        <div className="drawer-root">
+          <button
+            type="button"
+            className="drawer-mask"
+            aria-label="关闭档案抽屉"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label="档案">
+            <header className="drawer-head">
+              <h3>档案</h3>
+              <span className="spacer" />
+              <button
+                type="button"
+                className="ghost sm"
+                onClick={() => setDrawerOpen(false)}
+              >
+                收
+              </button>
+            </header>
+            <ul className="drawer-list">
+              {persons.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className={`drawer-item${p.id === personId ? ' active' : ''}`}
+                    onClick={() => {
+                      pickPerson(p.id);
+                      setDrawerOpen(false);
+                    }}
+                  >
+                    <span className="drawer-name">{p.name}</span>
+                    {p.id === personId ? <span className="badge">当前</span> : null}
+                  </button>
+                </li>
+              ))}
+              {!persons.length ? (
+                <li className="hint">还没有档案，先建一个。</li>
+              ) : null}
+            </ul>
+            <div className="drawer-new">
+              <input
+                value={newPersonName}
+                placeholder="新档案称呼"
+                onChange={(e) => setNewPersonName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void createPerson(newPersonName);
+                }}
+              />
+              <button
+                type="button"
+                className="sm"
+                onClick={() => void createPerson(newPersonName)}
+              >
+                新建
+              </button>
+            </div>
+            <p className="hint drawer-foot">
+              档案之间数据完全隔离。
+              <button
+                type="button"
+                className="ghost sm"
+                onClick={() => {
+                  setDrawerOpen(false);
+                  go('settings');
+                }}
+              >
+                文房管理
+              </button>
+            </p>
+          </aside>
         </div>
       )}
 
-      {page === 'cases' && (
-        <CasesPage
+      {backendDown && (
+        <div className="banner danger">
+          后端服务未启动：起卦与解卦暂不可用。请重新双击「启动梅花算卜」。
+        </div>
+      )}
+      {!hasKey && route === 'work' && (
+        <div className="banner warn">
+          当前未配置 Key：可起卦排盘；步 1/3/4/5 规则可解，其余标「需配置 Key」。可在「文房」中配置。
+        </div>
+      )}
+
+      {route === 'journal' && (
+        <JournalPage
           personId={personId}
           openCaseId={openFeedbackCaseId}
           onOpenCaseConsumed={() => setOpenFeedbackCaseId(null)}
           onSelectPerson={(id) => pickPerson(id)}
-          onGotoSettings={() => setPage('settings')}
+          onGotoSettings={() => go('settings')}
+          onCaseDeleted={(id) => {
+            if (id === caseId) resetWorkbench();
+          }}
+          onOpenInWorkbench={(id) => {
+            void openCase(id);
+            go('work');
+          }}
           onExport={() => {
             if (!personId) return;
             void apiClient
@@ -987,13 +1319,12 @@ export function App() {
                 a.download = `export-${(persons.find((x) => x.id === personId)?.name ?? 'me').replace(/[^\w一-龥-]/g, '-')}-${new Date().toISOString().slice(0, 10)}.json`;
                 a.click();
               })
-              .catch((e) => toast('error', String(e)));
+              .catch((e) => toast('error', errText(e)));
           }}
         />
       )}
-      {page === 'memory' && <MemoryPage personId={personId} />}
-      {page === 'knowledge' && <KnowledgePage />}
-      {page === 'settings' && (
+      {route === 'knowledge' && <KnowledgePage />}
+      {route === 'settings' && (
         <SettingsPage
           personId={personId}
           onChanged={(s) => {
@@ -1012,8 +1343,10 @@ export function App() {
         />
       )}
 
-      {page === 'work' && (
-        <div className="page-fade" key={phase + String(caseId)}>
+      {route === 'preview' && <PreviewPage />}
+
+      {route === 'work' && (
+        <div className="page-fade" key={caseId ?? 'prep'}>
           <div className="flowbar">
             {(
               [
@@ -1037,7 +1370,19 @@ export function App() {
                 </span>
               );
             })}
+            <span className="stage-chip" title="占者当前阶段">
+              占者 · {stageZh}
+            </span>
             <span className="spacer" />
+            {running ? (
+              <button
+                type="button"
+                className="ghost sm flowbar-stop"
+                onClick={() => abortSse()}
+              >
+                停止解卦
+              </button>
+            ) : null}
             <span className="muted">
               {locked
                 ? '一会话一案例 · 表单已锁定'
@@ -1045,13 +1390,72 @@ export function App() {
             </span>
           </div>
 
-          <main className="cols">
+          {replay ? (
+            <div className="replay-banner" role="status">
+              <span className="replay-badge">回看中 · 只读</span>
+              <span className="replay-title">{question || '（无标题）'}</span>
+              <span className="spacer" />
+              <button type="button" className="ghost sm" onClick={backToPrep}>
+                返回问卦
+              </button>
+              <button type="button" className="ghost sm" onClick={newSession}>
+                再来一卦
+              </button>
+            </div>
+          ) : null}
+
+          <main className={`cols ${phase}`}>
             <section className="col left">
+              {precastAsk ? (
+                <div className="panel pause-card" role="region" aria-label="起卦前补充">
+                  <div className="row pause-head">
+                    <span className="pause-badge">大肥鱼想先问一句</span>
+                  </div>
+                  <p className="pause-q">{precastAsk.question}</p>
+                  {precastAsk.why ? (
+                    <p className="hint pause-why">{precastAsk.why}</p>
+                  ) : null}
+                  <div className="pause-chips" role="group" aria-label="可选回答">
+                    {(precastAsk.suggested ?? []).map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        className="chip"
+                        onClick={() => setPrecastAnswer(o)}
+                      >
+                        {o}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={precastAnswer}
+                    placeholder="也可以用自己的话说一句"
+                    onChange={(e) => setPrecastAnswer(e.target.value)}
+                  />
+                  <div className="row pause-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={!precastAnswer.trim()}
+                      onClick={() => void finishPrecast(false)}
+                    >
+                      答完起卦
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => void finishPrecast(true)}
+                    >
+                      跳过，直接起卦
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="panel">
-                <h2>会话</h2>
+                <h2>问一件事</h2>
                 <p className="muted">
-                  {sessionId ? `会话 ${sessionId.slice(0, 8)}…` : '未开始'}
-                  {caseId ? ` · 案例 ${caseId.slice(0, 8)}…` : ''}
+                  {locked ? '已起卦 · 可继续解卦与同卦追问' : '写下想问的事，再起卦'}
                 </p>
 
                 {!locked ? (
@@ -1070,25 +1474,23 @@ export function App() {
                       />
                     </label>
 
-                    {/* 2. AI 推荐条 */}
-                    <div className="panel" style={{ marginTop: 8 }}>
+                    {/* 2. AI 推荐条（P0：轻量行，不再嵌套面板） */}
+                    <div className="recommend-row">
                       <div className="row">
                         <button
                           type="button"
-                          className="primary sm"
+                          className="sm"
                           onClick={() => void recommendMethod()}
                           disabled={!personId}
                         >
                           获取起卦法推荐
                         </button>
-                        {recommendStale && (
-                          <span className="badge warn">问题已变，请重新推荐</span>
-                        )}
+                        {recommendStale && <span className="hint">问题已变，可重新推荐</span>}
                         {routeInfo?.source === 'rule' && (
-                          <span className="badge">离线规则</span>
+                          <span className="hint">离线规则</span>
                         )}
                         {routeInfo?.confidence === 'low' && (
-                          <span className="badge warn">仅供参考</span>
+                          <span className="hint">仅供参考</span>
                         )}
                       </div>
                       {routeInfo?.method && (
@@ -1099,7 +1501,7 @@ export function App() {
                           {routeInfo.reason ? ` · ${routeInfo.reason}` : ''}
                           {routeInfo.category ? ` · 占类：${routeInfo.category}` : ''}
                           <span className="row" style={{ marginTop: 6 }}>
-                            <button type="button" className="sm primary" onClick={adoptRecommend}>
+                            <button type="button" className="sm" onClick={adoptRecommend}>
                               采纳
                             </button>
                             <button
@@ -1137,7 +1539,7 @@ export function App() {
                             />
                             <button
                               type="button"
-                              className="sm primary"
+                              className="sm"
                               onClick={() => void recommendMethod(clarifyAnswer)}
                             >
                               提交
@@ -1180,6 +1582,8 @@ export function App() {
                         ))}
                       </div>
                     )}
+
+                    <p className="hint method-hint">{schoolHint(method)}</p>
 
                     {/* 4. 参数区 */}
                     <div className="form">
@@ -1333,10 +1737,6 @@ export function App() {
                           ))}
                         </select>
                       </label>
-                      <p className="hint">
-                        流派：{schoolMoving === 'sum' ? '总和派' : '取模派'} ·{' '}
-                        {schoolHint(method)}
-                      </p>
                       {routeInfo?.missing?.length ? (
                         <p className="field-error">
                           推荐法还缺：{routeInfo.missing.join('、')}
@@ -1362,6 +1762,32 @@ export function App() {
                   </>
                 )}
 
+                {!personId ? (
+                  <p className="field-error">
+                    先选一个档案再起卦：右上「选择档案」，或「新建档案」。
+                  </p>
+                ) : null}
+
+                {!locked && recentCases.length > 0 ? (
+                  <div className="recent-cases">
+                    <p className="muted">最近 · 点开可回看追问</p>
+                    <ul>
+                      {recentCases.slice(0, 5).map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            className="ghost sm"
+                            onClick={() => void openCase(c.id)}
+                          >
+                            {c.question.slice(0, 22) || '（无标题）'}
+                          </button>
+                          <span className="muted">{c.date}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
                 <div className="row left-cta">
                   {!locked ? (
                     <button
@@ -1377,9 +1803,9 @@ export function App() {
                       type="button"
                       className="primary"
                       onClick={() => void interpret()}
-                      disabled={!caseId || !cast || running || backendDown}
+                      disabled={!caseId || !cast || running || !!need || backendDown}
                     >
-                      {running ? '解卦中…' : '解卦'}
+                      {running ? '解卦中…' : need ? '等待补充' : '解卦'}
                     </button>
                   )}
                   {running && (
@@ -1396,7 +1822,109 @@ export function App() {
             </section>
 
             <section className="col mid">
-              <h2>排盘与九步</h2>
+              <h2>{phase === 'cast' ? '排盘' : phase === 'prep' ? '排盘与九步' : '解卦'}</h2>
+              {phase !== 'prep' && question ? (
+                <p className="chapter-question">
+                  <span className="chapter-question-label">问</span>
+                  {question}
+                </p>
+              ) : null}
+              {need ? (
+                <div className="panel pause-card" role="region" aria-label="补充背景">
+                  <div className="row pause-head">
+                    <span className="pause-badge">大肥鱼想先问一句</span>
+                    <span className="hint">
+                      已解 {steps.length}/9 · 停在第 {need.stepId ?? '—'} 步
+                      {need.stepId ? `「${STEP_TITLES[need.stepId]}」` : ''}
+                    </span>
+                  </div>
+                  <p className="pause-q">{plainText(need.question)}</p>
+                  <p className="hint pause-why">
+                    {need.why ?? needWhy(need.stepId)}
+                  </p>
+                  <div className="pause-chips" role="group" aria-label="可选回答">
+                    {(need.suggested?.length
+                      ? need.suggested
+                      : (need.options ?? []).filter((o) => o !== '跳过')
+                    ).map((o) => (
+                        <button
+                          key={o}
+                          type="button"
+                          className="chip"
+                          disabled={running}
+                          onClick={() => {
+                            setRemember(true);
+                            void submitResume(false, o);
+                          }}
+                        >
+                          {o}
+                        </button>
+                      ))}
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={answer}
+                    placeholder="也可以用自己的话说一句（例：替我妈问，她最近睡不好）"
+                    disabled={running}
+                    onChange={(e) => setAnswer(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        void submitResume(false);
+                      }
+                    }}
+                  />
+                  <p className="hint pause-examples">
+                    {need.examples?.length
+                      ? need.examples.slice(0, 2).join(' ')
+                      : `例：${needExamples(need)}`}
+                  </p>
+                  <div className="row pause-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={running || !answer.trim()}
+                      onClick={() => {
+                        setChatPinned(true);
+                        void submitResume(false);
+                      }}
+                    >
+                      {running ? '继续中…' : '继续解卦'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      disabled={running}
+                      onClick={() => {
+                        setChatPinned(true);
+                        void submitResume(true);
+                      }}
+                    >
+                      跳过，直接断
+                    </button>
+                    <label className="pause-remember">
+                      <input
+                        type="checkbox"
+                        checked={remember}
+                        onChange={(e) => setRemember(e.target.checked)}
+                      />
+                      记入这个人的档案
+                    </label>
+                  </div>
+                </div>
+              ) : phase === 'cast' ? (
+                <div className="chapter-cta">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => void interpret()}
+                    disabled={!caseId || !cast || backendDown}
+                  >
+                    解卦
+                  </button>
+                  <span className="hint">九步逐步展开；任何一步都可插话纠偏</span>
+                </div>
+              ) : null}
               {!cast && !steps.length && (
                 <div className="empty-state">
                   <strong>尚未起卦</strong>
@@ -1411,11 +1939,7 @@ export function App() {
                             <button
                               type="button"
                               className="ghost sm"
-                              onClick={() => {
-                                setCaseId(c.id);
-                                if (c.sessionId) setSessionId(c.sessionId);
-                                setStatus(`已打开案例 ${c.id.slice(0, 8)}…`);
-                              }}
+                              onClick={() => void openCase(c.id)}
                             >
                               {c.question.slice(0, 24) || '（无标题）'}
                               {c.hex ? ` · ${c.hex}` : ''}
@@ -1443,10 +1967,6 @@ export function App() {
                         </div>
                         <div className="formula-meta">
                           <span className="badge">动爻 {cast.movingYao}</span>
-                          <span className="badge">{schoolHint(method)}</span>
-                          <span className="badge">
-                            {schoolMoving === 'sum' ? '总和派' : '取模派'}
-                          </span>
                         </div>
                       </div>
                       <details className="formula-full">
@@ -1479,54 +1999,6 @@ export function App() {
                         {hexFull ? '收起大图' : '放大看盘'}
                       </button>
                     </div>
-                    {qiSegs.length > 0 && (
-                      <div className="qi-panel">
-                        <div className="qi-tiyong">
-                          <div className="qi-card ti">
-                            <b>体 · 我/主</b>
-                            <span>
-                              {GUA_NAME_ZH[qiSegs[0]!.ti] ?? qiSegs[0]!.ti}
-                              （{elementZh(qiSegs[0]!.tiEl)}）
-                            </span>
-                            <em>
-                              {qiSegs[0]!.ti === cast.ben.lower ? '下卦' : '上卦'}
-                            </em>
-                          </div>
-                          <div className="qi-flow">
-                            <span>
-                              {elementZh(qiSegs[0]!.yongEl)}
-                              {qiSegs[0]!.relation === 'bi_he'
-                                ? ' ≡ '
-                                : qiSegs[0]!.flow === 'yong_to_ti'
-                                  ? ' → '
-                                  : ' ⇐ '}
-                              {elementZh(qiSegs[0]!.tiEl)}
-                            </span>
-                            <b>{qiSegs[0]!.label}</b>
-                            <em>{qiSegs[0]!.plain}</em>
-                          </div>
-                          <div className="qi-card yong">
-                            <b>用 · 事/客</b>
-                            <span>
-                              {GUA_NAME_ZH[qiSegs[0]!.yong] ?? qiSegs[0]!.yong}
-                              （{elementZh(qiSegs[0]!.yongEl)}）
-                            </span>
-                            <em>
-                              {qiSegs[0]!.yong === cast.ben.lower ? '下卦·动所在' : '上卦·动所在'}
-                            </em>
-                          </div>
-                        </div>
-                        <div className="qi-stages">
-                          {qiSegs.map((s) => (
-                            <span key={s.stage} className="badge">
-                              {s.stage === 'ben' ? '本' : s.stage === 'hu' ? '互' : '变'}：
-                              {s.label}
-                            </span>
-                          ))}
-                          <span className="muted">趋势：{qiTrendPlain(qiSegs)}</span>
-                        </div>
-                      </div>
-                    )}
                     {hexFull ? (
                       <div
                         className="hexboards reveal"
@@ -1596,25 +2068,67 @@ export function App() {
                         ))}
                       </div>
                     )}
+
+                    {qiSegs.length > 0 && (
+                      <div className="qi-panel">
+                        <div className="qi-tiyong">
+                          <div className="qi-card ti">
+                            <b>体 · 我/主</b>
+                            <span>
+                              {GUA_NAME_ZH[qiSegs[0]!.ti] ?? qiSegs[0]!.ti}
+                              （{elementZh(qiSegs[0]!.tiEl)}）
+                            </span>
+                            <em>
+                              {qiSegs[0]!.ti === cast.ben.lower ? '下卦' : '上卦'}
+                            </em>
+                          </div>
+                          <div className="qi-flow">
+                            <span>
+                              {elementZh(qiSegs[0]!.yongEl)}
+                              {qiSegs[0]!.relation === 'bi_he'
+                                ? ' ≡ '
+                                : qiSegs[0]!.flow === 'yong_to_ti'
+                                  ? ' → '
+                                  : ' ⇐ '}
+                              {elementZh(qiSegs[0]!.tiEl)}
+                            </span>
+                            <b>{qiSegs[0]!.label}</b>
+                            <em>{qiSegs[0]!.plain}</em>
+                          </div>
+                          <div className="qi-card yong">
+                            <b>用 · 事/客</b>
+                            <span>
+                              {GUA_NAME_ZH[qiSegs[0]!.yong] ?? qiSegs[0]!.yong}
+                              （{elementZh(qiSegs[0]!.yongEl)}）
+                            </span>
+                            <em>
+                              {qiSegs[0]!.yong === cast.ben.lower ? '下卦·动所在' : '上卦·动所在'}
+                            </em>
+                          </div>
+                        </div>
+                        <div className="qi-stages">
+                          {qiSegs.map((s) => (
+                            <span key={s.stage} className="badge">
+                              {s.stage === 'ben' ? '本' : s.stage === 'hu' ? '互' : '变'}：
+                              {s.label}
+                            </span>
+                          ))}
+                          <span className="muted">趋势：{qiTrendPlain(qiSegs)}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
               {(steps.length > 0 || running) && (
                 <>
-                  <div className="step-progress">
-                    <span>
-                      解卦进度 {doneCount}/{steps.length || 9}
-                    </span>
-                    <div className="progress-track">
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${Math.round((doneCount / 9) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
+                  {running ? (
+                    <p className="step-status">
+                      <span className="step-status-dot" />
+                      解卦中 · {doneCount}/{steps.length || 9}
+                    </p>
+                  ) : null}
                   <div className="step-list-wrap">
                   <ul className="step-list">
                     {(steps.length
@@ -1655,20 +2169,25 @@ export function App() {
                               </b>
                               <span className="step-sum">{summary}</span>
                             </div>
-                            <span
-                              className={`badge ${
-                                s.status === 'confirmed'
-                                  ? 'ok'
-                                  : s.status === 'failed'
+                            {s.status !== 'confirmed' ? (
+                              <span
+                                className={`badge ${
+                                  s.status === 'failed'
                                     ? 'danger'
                                     : s.status === 'need_key' ||
-                                        s.status === 'skipped_by_method'
+                                        s.status === 'skipped_by_method' ||
+                                        s.status === 'running'
                                       ? 'warn'
                                       : ''
-                              }`}
-                            >
-                              {statusLabel(s.status)}
-                            </span>
+                                }`}
+                              >
+                                {statusLabel(s.status)}
+                              </span>
+                            ) : (
+                              <span className="step-ok" aria-label="已完成">
+                                ✓
+                              </span>
+                            )}
                             <span className="muted">{open ? '收起' : '展开'}</span>
                           </button>
                           {open && (
@@ -1697,6 +2216,7 @@ export function App() {
                                   </ul>
                                 </details>
                               )}
+                              {!replay && (
                               <div className="step-actions">
                                 <button
                                   type="button"
@@ -1710,8 +2230,19 @@ export function App() {
                                 >
                                   插话
                                 </button>
+                                {s.status === 'failed' || s.status === 'need_key' ? (
+                                  <button
+                                    type="button"
+                                    className="sm"
+                                    disabled={running}
+                                    onClick={() => void interpret(s.stepId)}
+                                  >
+                                    重试本步
+                                  </button>
+                                ) : null}
                               </div>
-                              {reviseOpen === s.stepId && (
+                              )}
+                              {!replay && reviseOpen === s.stepId && (
                                 <div className="step-revise">
                                   <textarea
                                     rows={2}
@@ -1761,17 +2292,37 @@ export function App() {
                     },
                     poem: verdict.poem,
                     question,
+                    signNo,
                   }}
                 />
               )}
 
+              {summaryStream && !verdict ? (
+                <div className="verdict-stream">
+                  <span className="hint">占断生成中…</span>
+                  <p>
+                    {summaryStream}
+                    <span className="stream-caret" aria-hidden>
+                      ▍
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+
               {verdict && (
                 <article className="card verdict">
-                  <button
-                    type="button"
+                  <div
                     className="verdict-bar"
+                    role="button"
+                    tabIndex={0}
                     aria-expanded={verdictOpen}
                     onClick={() => setVerdictOpen((v) => !v)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setVerdictOpen((v) => !v);
+                      }
+                    }}
                   >
                     <span className={gradeClass(verdict.grade)}>
                       {gradeLabel(verdict.grade)}
@@ -1781,16 +2332,45 @@ export function App() {
                     </span>
                     <button
                       type="button"
-                      className="primary sm sign-open-btn"
+                      className="ghost sm sign-open-btn"
                       aria-label="打开签牌"
-                      onClick={() => setSignOpen(true)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSignOpen(true);
+                      }}
                     >
-                      阅签
+                      放大签牌
                     </button>
                     <span className="muted">
                       {verdictOpen ? '收起' : '展开占断书'}
                     </span>
-                  </button>
+                  </div>
+                  <div className="verdict-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => {
+                        if (caseId) setOpenFeedbackCaseId(caseId);
+                        go('journal');
+                      }}
+                    >
+                      去回填实际
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => newSession()}
+                    >
+                      再来一卦
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => setSignOpen(true)}
+                    >
+                      看签诗
+                    </button>
+                  </div>
                   {verdictOpen && (
                   <div className="verdict-detail">
                   <div className="verdict-head">
@@ -1832,27 +2412,44 @@ export function App() {
                       主断依据步骤：{verdict.basedOnSteps.join('、')}
                     </p>
                   )}
-                  <div className="row">
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={() => {
-                        if (caseId) setOpenFeedbackCaseId(caseId);
-                        setPage('cases');
-                      }}
-                    >
-                      去回填实际
-                    </button>
-                  </div>
                   </div>
                   )}
                 </article>
               )}
+
+              {verdict && cast && (
+                <section className="chapter-sign">
+                  <div className="chapter-sign-head">
+                    <h3>签</h3>
+                    <span className="spacer" />
+                    <button
+                      type="button"
+                      className="ghost sm"
+                      onClick={() => setSignOpen(true)}
+                    >
+                      放大
+                    </button>
+                  </div>
+                  <SignBoard
+                    grade={verdict.grade}
+                    ben={{
+                      name: cast.ben.name,
+                      lines: cast.ben.lines,
+                      movingYao: cast.movingYao,
+                    }}
+                    poem={verdict.poem}
+                    question={question}
+                    caseKey={caseId ?? undefined}
+                    signNo={signNo}
+                  />
+                </section>
+              )}
+
             </section>
 
             <section className="col right">
-              <h2>对话</h2>
-              <div className="chat chat-scroll" onScroll={onChatScroll}>
+              <h2>对话 · 大肥鱼</h2>
+              <div className="chat chat-scroll" ref={chatBoxRef} onScroll={onChatScroll}>
                 {chat.length === 0 && (
                   <p className="muted">
                     起卦后这里会显示过程；可同卦追问（不重起）。
@@ -1865,7 +2462,15 @@ export function App() {
                     isLongFollow && !followExpanded ? `${text.slice(0, 200)}…` : text;
                   return (
                     <div key={m.id} className={`bubble ${m.role} ${m.kind ?? ''}`}>
+                      {m.role === 'assistant' ? (
+                        <span className="bubble-speaker">大肥鱼</span>
+                      ) : null}
                       {shown}
+                      {streamMsgId === m.id ? (
+                        <span className="stream-caret" aria-hidden>
+                          ▍
+                        </span>
+                      ) : null}
                       {isLongFollow && (
                         <button
                           type="button"
@@ -1880,56 +2485,11 @@ export function App() {
                 })}
                 {need && (
                   <div className="bubble assistant need">
+                    <span className="bubble-speaker">大肥鱼</span>
                     <p>{plainText(need.question)}</p>
-                    {need.options?.length ? (
-                      <div className="row">
-                        {need.options.map((o) => (
-                          <button
-                            key={o}
-                            type="button"
-                            className="sm"
-                            onClick={() => setAnswer(o)}
-                          >
-                            {o}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    <input
-                      value={answer}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder="可跳过"
-                    />
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={remember}
-                        onChange={(e) => setRemember(e.target.checked)}
-                      />
-                      记入记忆
-                    </label>
-                    <div className="row">
-                      <button
-                        type="button"
-                        className="primary sm"
-                        onClick={() => {
-                          setChatPinned(true);
-                          return void submitResume(false);
-                        }}
-                      >
-                        提交
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost sm"
-                        onClick={() => {
-                          setChatPinned(true);
-                          return void submitResume(true);
-                        }}
-                      >
-                        跳过并继续
-                      </button>
-                    </div>
+                    <p className="hint">
+                      请在中栏「补充背景」卡片里回答（点选项会直接继续），或点「跳过」。
+                    </p>
                   </div>
                 )}
                 <div ref={chatEndRef} />
@@ -1940,7 +2500,8 @@ export function App() {
                   className="ghost sm"
                   onClick={() => {
                     setChatPinned(true);
-                    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    const el = chatBoxRef.current;
+                    if (el) el.scrollTop = el.scrollHeight;
                   }}
                 >
                   回到底部
@@ -1950,8 +2511,10 @@ export function App() {
                 <input
                   value={followText}
                   onChange={(e) => setFollowText(e.target.value)}
-                  placeholder="同卦追问（不重起）"
-                  disabled={!hasKey || !caseId}
+                  placeholder={
+                    replay ? '回看中不可追问；返回问卦后可继续' : '同卦追问（不重起）'
+                  }
+                  disabled={replay || !hasKey || !caseId}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -1961,14 +2524,36 @@ export function App() {
                 />
                 <button
                   type="button"
-                  disabled={!hasKey || !caseId}
+                  disabled={replay || !hasKey || !caseId}
                   onClick={() => void doFollowup()}
                 >
                   发送
                 </button>
               </div>
+              {verdict && cast ? (
+                <div className="chat-sign-bar">
+                  <span className={gradeClass(verdict.grade)}>
+                    {gradeLabel(verdict.grade)}
+                  </span>
+                  <span className="chat-sign-gua">
+                    {cast.ben.name}
+                    {cast.movingYao ? ` · 动${cast.movingYao}` : ''}
+                  </span>
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    aria-haspopup="dialog"
+                    onClick={() => setSignOpen(true)}
+                  >
+                    展开签诗
+                  </button>
+                </div>
+              ) : null}
               <p className="hint">
-                插话请在中栏对应步骤卡内操作；此处仅同卦追问。
+                {replay
+                  ? '回看中为只读：不可插话、不可追问；可返回问卦或再来一卦。'
+                  : '插话请在中栏对应步骤卡内操作；此处仅同卦追问。'}
               </p>
               <p className="status">{status}</p>
             </section>

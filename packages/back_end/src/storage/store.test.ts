@@ -174,6 +174,65 @@ describe('deletePerson 硬删级联', () => {
   });
 });
 
+describe('deleteCaseCascade 硬删单例', () => {
+  it('级联删 steps/messages/feedback/memories，并清理空会话', () => {
+    const { db, store } = setup();
+    const p = store.createPerson('x');
+    const s = store.createSession(p.id);
+    const c = store.createCase(s.id, p.id, { question: 'q' });
+    store.updateCaseCast(c.id, { method: 'datetime', status: 'casted' });
+    store.appendMessage({
+      sessionId: s.id,
+      caseId: c.id,
+      role: 'user',
+      content: '追问一',
+    });
+    store.appendMessage({
+      sessionId: s.id,
+      caseId: c.id,
+      role: 'assistant',
+      content: '答一',
+    });
+    store.saveSteps(c.id, [
+      {
+        stepId: 1,
+        status: 'pending',
+        conclusion: '',
+        sources: [],
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+    store.saveFeedback(c.id, { accuracy: 'no' });
+    store.insertMemory({
+      id: 'm-del',
+      personId: p.id,
+      sessionId: s.id,
+      caseId: c.id,
+      type: 'round',
+      payload: { text: 't' },
+      tags: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    const r = store.deleteCaseCascade(c.id);
+    expect(r.steps).toBe(1);
+    expect(r.messages).toBe(2);
+    expect(r.feedback).toBe(1);
+    expect(r.memories).toBe(1);
+    expect(r.sessionDeleted).toBe(true);
+
+    const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+    expect(count('SELECT COUNT(*) n FROM cases')).toBe(0);
+    expect(count('SELECT COUNT(*) n FROM sessions')).toBe(0);
+    expect(count('SELECT COUNT(*) n FROM steps')).toBe(0);
+    expect(count('SELECT COUNT(*) n FROM messages')).toBe(0);
+    expect(count('SELECT COUNT(*) n FROM cases_feedback')).toBe(0);
+    expect(count('SELECT COUNT(*) n FROM memories')).toBe(0);
+    // 档案本身保留
+    expect(count('SELECT COUNT(*) n FROM persons')).toBe(1);
+  });
+});
+
 describe('locks', () => {
   it('CASE_IN_FLIGHT', () => {
     const locks = new CaseLocks();
@@ -199,6 +258,14 @@ describe('getStats', () => {
     expect(s.filled).toBe(6);
     expect(s.composite).toBeCloseTo((3 + 1) / 6);
     expect(computeStats([]).composite).toBeNull();
+    // 签号口径：只计已出占断（signed）
+    expect(
+      computeStats([
+        { accuracy: null, cast_method: null, signed: true },
+        { accuracy: null, cast_method: null, signed: false },
+        { accuracy: null, cast_method: null },
+      ]).signed,
+    ).toBe(1);
   });
 });
 

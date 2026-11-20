@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export type ToastItem = {
   id: string;
@@ -81,5 +82,143 @@ export function SkeletonRows({ n = 3 }: { n?: number }) {
         <div key={i} className="skeleton-row" />
       ))}
     </div>
+  );
+}
+
+/** 统一确认框（替代 window.confirm；Esc 由调用方控制，遮罩可点） */
+export function ConfirmDialog({
+  open,
+  title,
+  desc,
+  confirmLabel = '确定',
+  danger,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  desc?: string;
+  confirmLabel?: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return createPortal(
+    <div className="modal-mask" role="presentation" onClick={onCancel}>
+      <div
+        className="modal-card confirm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3>{title}</h3>
+        {desc ? <p className="muted">{desc}</p> : null}
+        <div className="row">
+          <button
+            type="button"
+            className={danger ? 'danger' : 'primary'}
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {busy ? '处理中…' : confirmLabel}
+          </button>
+          <button type="button" className="ghost" disabled={busy} onClick={onCancel}>
+            取消
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** 统一输入对话框（替代 window.prompt） */
+export function PromptDialog({
+  open,
+  title,
+  label,
+  placeholder,
+  defaultValue,
+  confirmLabel = '确定',
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  label?: string;
+  placeholder?: string;
+  defaultValue?: string;
+  confirmLabel?: string;
+  busy?: boolean;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(defaultValue ?? '');
+  useEffect(() => {
+    if (open) setValue(defaultValue ?? '');
+  }, [open, defaultValue]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
+  if (!open) return null;
+  const submit = () => {
+    const v = value.trim();
+    if (v) onConfirm(v);
+  };
+  return createPortal(
+    <div className="modal-mask" role="presentation" onClick={onCancel}>
+      <div
+        className="modal-card confirm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3>{title}</h3>
+        {label ? (
+          <label className="prompt-label">
+            {label}
+            <input
+              autoFocus
+              value={value}
+              placeholder={placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+              }}
+            />
+          </label>
+        ) : (
+          <input
+            autoFocus
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit();
+            }}
+          />
+        )}
+        <div className="row">
+          <button type="button" className="primary" disabled={busy || !value.trim()} onClick={submit}>
+            {busy ? '处理中…' : confirmLabel}
+          </button>
+          <button type="button" className="ghost" disabled={busy} onClick={onCancel}>
+            取消
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

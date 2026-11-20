@@ -64,6 +64,8 @@ type CaseRow = {
   route_rounds: number;
   cast_json: string | null;
   verdict_json: string | null;
+  dialogue_stage: string | null;
+  stage_updated_at: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -86,11 +88,14 @@ function personFromRow(r: PersonRow): Person {
     createdAt: r.created_at,
     profileCard: r.profile_card ?? undefined,
     roleCard: x.role_card ?? undefined,
-    persona:
-      x.persona === 'xiansheng' || x.persona === 'feiyu'
-        ? x.persona
-        : undefined,
-    tone: (x.tone as Person['tone']) ?? undefined,
+    // 单人设：历史 xiansheng 归一到 feiyu；旧语气 elegant 归一到 standard
+    persona: x.persona ? 'feiyu' : undefined,
+    tone:
+      x.tone === 'brief' || x.tone === 'warm'
+        ? x.tone
+        : x.tone
+          ? 'standard'
+          : undefined,
   };
 }
 
@@ -116,6 +121,8 @@ function caseFromRow(r: CaseRow): Case {
     steps: [],
     status: r.status as CaseStatus,
     verdict: parseJson<Verdict>(r.verdict_json),
+    dialogueStage: r.dialogue_stage ?? undefined,
+    stageUpdatedAt: r.stage_updated_at ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -224,9 +231,104 @@ export function createStore(db: Db) {
       db.prepare('UPDATE persons SET role_card = ? WHERE id = ?').run(text, id);
     },
 
-    /** 硬删档案 + 级联 */
+    /** 档案信息（§12.3.3） */
+    getProfileInfo(id: string): Record<string, unknown> | null {
+      const r = db.prepare('SELECT profile_info FROM persons WHERE id = ?').get(id) as
+        | { profile_info?: string | null }
+        | undefined;
+      if (!r?.profile_info) return null;
+      try {
+        return JSON.parse(r.profile_info) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    },
+
+    setProfileInfo(id: string, info: Record<string, unknown>): void {
+      db.prepare('UPDATE persons SET profile_info = ? WHERE id = ?').run(
+        JSON.stringify(info),
+        id,
+      );
+    },
+
+    listRelations(personId?: string): Array<{
+      id: string;
+      fromId: string;
+      toId: string;
+      relCode: string;
+      label: string | null;
+      closeness: number | null;
+      note: string | null;
+    }> {
+      const rows = (
+        personId
+          ? db
+              .prepare(
+                'SELECT * FROM person_relations WHERE from_id = ? OR to_id = ?',
+              )
+              .all(personId, personId)
+          : db.prepare('SELECT * FROM person_relations').all()
+      ) as Array<{
+        id: string;
+        from_id: string;
+        to_id: string;
+        rel_code: string;
+        label: string | null;
+        closeness: number | null;
+        note: string | null;
+      }>;
+      return rows.map((r) => ({
+        id: r.id,
+        fromId: r.from_id,
+        toId: r.to_id,
+        relCode: r.rel_code,
+        label: r.label,
+        closeness: r.closeness,
+        note: r.note,
+      }));
+    },
+
+    upsertRelation(edge: {
+      id?: string;
+      fromId: string;
+      toId: string;
+      relCode: string;
+      label?: string;
+      closeness?: number;
+      note?: string;
+    }): { id: string } {
+      const id = edge.id ?? newId();
+      db.prepare(
+        `INSERT INTO person_relations
+          (id, from_id, to_id, rel_code, label, closeness, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           from_id=excluded.from_id, to_id=excluded.to_id,
+           rel_code=excluded.rel_code, label=excluded.label,
+           closeness=excluded.closeness, note=excluded.note`,
+      ).run(
+        id,
+        edge.fromId,
+        edge.toId,
+        edge.relCode,
+        edge.label ?? null,
+        edge.closeness ?? null,
+        edge.note ?? null,
+        nowIso(),
+      );
+      return { id };
+    },
+
+    deleteRelation(id: string): void {
+      db.prepare('DELETE FROM person_relations WHERE id = ?').run(id);
+    },
+
+    /** 硬删档案 + 级联关系 */
     deletePerson(id: string): void {
       const run = db.transaction(() => {
+        db.prepare(
+          'DELETE FROM person_relations WHERE from_id = ? OR to_id = ?',
+        ).run(id, id);
         db.prepare('DELETE FROM persons WHERE id = ?').run(id);
       });
       run();
@@ -386,6 +488,19 @@ export function createStore(db: Db) {
       return r ? caseFromRow(r) : null;
     },
 
+    setCaseStage(caseId: string, stage: string): void {
+      db.prepare(
+        'UPDATE cases SET dialogue_stage = ?, stage_updated_at = ? WHERE id = ?',
+      ).run(stage, new Date().toISOString(), caseId);
+    },
+
+    updateCaseContextNote(caseId: string, text: string): void {
+      db.prepare('UPDATE cases SET context_note = ? WHERE id = ?').run(
+        text,
+        caseId,
+      );
+    },
+
     listCases(personId: string): Case[] {
       const rows = db
         .prepare(
@@ -539,6 +654,7 @@ export function createStore(db: Db) {
       case: Case;
       steps: StepState[];
       feedback: FeedbackRow | null;
+      messages: Message[];
     } | null {
       const c = this.getCase(id);
       if (!c) return null;
@@ -546,13 +662,70 @@ export function createStore(db: Db) {
         case: c,
         steps: this.getSteps(id),
         feedback: this.getFeedback(id),
+        messages: this.listMessages(c.sessionId, id),
       };
+    },
+
+    /** 硬删一个案例：FK 级联删 steps/messages/feedback/memories；若会话无其他案例则一并删 */
+    deleteCaseCascade(id: string): {
+      caseId: string;
+      steps: number;
+      messages: number;
+      feedback: number;
+      memories: number;
+      sessionDeleted: boolean;
+    } {
+      const c = this.getCase(id);
+      if (!c) {
+        return {
+          caseId: id,
+          steps: 0,
+          messages: 0,
+          feedback: 0,
+          memories: 0,
+          sessionDeleted: false,
+        };
+      }
+      const count = (sql: string, arg: string) =>
+        (db.prepare(sql).get(arg) as { n: number } | undefined)?.n ?? 0;
+      const steps = count('SELECT COUNT(*) AS n FROM steps WHERE case_id = ?', id);
+      const messages = count(
+        'SELECT COUNT(*) AS n FROM messages WHERE case_id = ?',
+        id,
+      );
+      const feedback = count(
+        'SELECT COUNT(*) AS n FROM cases_feedback WHERE case_id = ?',
+        id,
+      );
+      const memories = count(
+        'SELECT COUNT(*) AS n FROM memories WHERE case_id = ?',
+        id,
+      );
+      const run = db.transaction(() => {
+        db.prepare('DELETE FROM cases WHERE id = ?').run(id);
+        const left = (
+          db
+            .prepare('SELECT COUNT(*) AS n FROM cases WHERE session_id = ?')
+            .get(c.sessionId) as { n: number }
+        ).n;
+        if (left === 0) {
+          db.prepare('DELETE FROM sessions WHERE id = ?').run(c.sessionId);
+        }
+      });
+      run();
+      const sessionDeleted = (
+        db
+          .prepare('SELECT COUNT(*) AS n FROM sessions WHERE id = ?')
+          .get(c.sessionId) as { n: number }
+      ).n === 0;
+      return { caseId: id, steps, messages, feedback, memories, sessionDeleted };
     },
 
     getStats(personId: string): StatsResult {
       const rows = db
         .prepare(
-          `SELECT f.accuracy, c.cast_method, c.category, f.deviation_steps_json
+          `SELECT f.accuracy, c.cast_method, c.category, f.deviation_steps_json,
+                  (c.verdict_json IS NOT NULL) AS signed
            FROM cases c
            LEFT JOIN cases_feedback f ON f.case_id = c.id
            WHERE c.person_id = ?`,
@@ -562,6 +735,7 @@ export function createStore(db: Db) {
         cast_method: string | null;
         category: string | null;
         deviation_steps_json: string | null;
+        signed: number;
       }>;
       return computeStats(
         rows.map((r) => ({
@@ -571,6 +745,7 @@ export function createStore(db: Db) {
           deviation_steps: r.deviation_steps_json
             ? (JSON.parse(r.deviation_steps_json) as number[])
             : null,
+          signed: r.signed === 1,
         })),
       );
     },

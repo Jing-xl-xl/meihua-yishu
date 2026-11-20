@@ -81,6 +81,21 @@ export {
   isGuaId,
 } from './constants/personGua';
 export type { PersonMapKey } from './constants/personGua';
+export type {
+  RelCode,
+  RelLevel,
+  PersonKind,
+  ProfileInfo,
+  RelationEdge,
+} from './types/relations';
+export {
+  CLOSENESS_LABEL,
+  REL_GROUPS,
+  REL_LABEL,
+  REL_LEVEL,
+  closenessZh,
+  relZh,
+} from './types/relations';
 export { STEP_IDS, STEP_TITLES, STEP_STATUSES } from './constants/steps';
 export { CAST_METHODS, METHOD_POLARITY } from './constants/methods';
 export { SCHOOL_DEFAULTS } from './constants/school';
@@ -139,8 +154,14 @@ export {
   computeProfileAxes,
   isAxesEmpty,
   isDoneCase,
+  RADAR_MIN_CASES,
+  buildProfileCopy,
 } from './utils/profileAxes';
-export type { ProfileAxes, ProfileCaseLite } from './utils/profileAxes';
+export type {
+  ProfileAxes,
+  ProfileCaseLite,
+  ProfileCopy,
+} from './utils/profileAxes';
 
 // 知识词条
 export type {

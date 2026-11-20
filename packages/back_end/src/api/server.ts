@@ -2,11 +2,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   AppError,
+  closenessZh,
   newId,
+  relZh,
   type CastResult,
   type SSEEvent,
 } from '@meihua/shared';
 
+import { bindClientDisconnect } from './disconnect';
 import { sendAppError } from './errors';
 import {
   describePresets,
@@ -27,13 +30,29 @@ function isAllowedBaseUrl(url: string): boolean {
     return false;
   }
 }
-import { writeAnchor, writePreference, writeResult, writeRound } from '../memory/write';
+import {
+  writeAnchor,
+  writePreference,
+  writeReflection,
+  writeResult,
+  writeRound,
+} from '../memory/write';
 import {
   updateProfileCard,
   refreshProfileCard,
   parseProfileCard,
   PROFILE_THRESHOLD,
 } from '../memory/profile';
+import { CHARACTER_FEIYU } from '../interpretation/prompts/persona';
+import {
+  fallbackAsk,
+  pickBackgroundAsk,
+} from '../interpretation/background';
+import {
+  canTransition,
+  deriveStage,
+  type DialogueStage,
+} from '../interpretation/stage';
 import {
   buildPersonMemoryPrompt,
   DEFAULT_ROLE_CARD,
@@ -66,6 +85,17 @@ export function createApp(deps: AppDeps): FastifyInstance {
     return { persons: deps.store.listPersonsWithCaseCount() };
   });
 
+  app.get('/api/character', async () => ({
+    id: CHARACTER_FEIYU.id,
+    name: CHARACTER_FEIYU.name,
+    tagline: CHARACTER_FEIYU.tagline,
+    identity: CHARACTER_FEIYU.identity,
+    voice: CHARACTER_FEIYU.voice,
+    examples: CHARACTER_FEIYU.examples,
+    boundaries: CHARACTER_FEIYU.boundaries,
+    stages: CHARACTER_FEIYU.stageNotes,
+  }));
+
   app.post('/api/persons', async (req) => {
     const body = parseOr400(z.object({ name: z.string().min(1) }), req.body);
     return { person: deps.store.createPerson(body.name) };
@@ -77,8 +107,8 @@ export function createApp(deps: AppDeps): FastifyInstance {
       z
         .object({
           name: z.string().min(1).optional(),
-          persona: z.enum(['feiyu', 'xiansheng']).optional(),
-          tone: z.enum(['standard', 'brief', 'warm', 'elegant']).optional(),
+          persona: z.enum(['feiyu']).optional(),
+          tone: z.enum(['standard', 'brief', 'warm']).optional(),
         })
         .refine(
           (b) =>
@@ -92,14 +122,6 @@ export function createApp(deps: AppDeps): FastifyInstance {
     const cur = deps.store.getPerson(id);
     if (!cur) {
       throw new AppError('PERSON_NOT_FOUND', id);
-    }
-    const nextPersona = body.persona ?? cur.persona;
-    const nextTone = body.tone ?? cur.tone;
-    if (nextPersona === 'feiyu' && nextTone === 'elegant') {
-      throw new AppError(
-        'INVALID_REQUEST',
-        '大肥鱼不支持「清雅半文」语气',
-      );
     }
     if (body.name) deps.store.renamePerson(id, body.name);
     if (body.persona !== undefined || body.tone !== undefined) {
@@ -115,6 +137,102 @@ export function createApp(deps: AppDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     deps.store.deletePerson(id);
     return { ok: true };
+  });
+
+  // ── 档案信息 / 关系图谱（§12.3）──
+  app.get('/api/persons/:id/profile-info', async (req) => {
+    const { id } = req.params as { id: string };
+    return { info: deps.store.getProfileInfo(id) ?? {} };
+  });
+
+  app.put('/api/persons/:id/profile-info', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parseOr400(
+      z.object({
+        name: z.string().min(1),
+        kind: z.enum(['self', 'family', 'friend', 'stranger', 'other']),
+        relCode: z.string().min(1),
+        label: z.string().optional(),
+        closeness: z.number().int().min(1).max(5).optional(),
+        stage: z.string().optional(),
+        cares: z.string().optional(),
+        workStyle: z.string().optional(),
+        nature: z.string().optional(),
+        taboo: z.string().optional(),
+      }),
+      req.body ?? {},
+    );
+    if (!deps.store.getPerson(id)) throw new AppError('PERSON_NOT_FOUND', id);
+    deps.store.setProfileInfo(id, body as Record<string, unknown>);
+    deps.store.renamePerson(id, body.name);
+    return { ok: true, info: deps.store.getProfileInfo(id) };
+  });
+
+  app.get('/api/relations', async (req) => {
+    const q = (req.query ?? {}) as { personId?: string };
+    return { relations: deps.store.listRelations(q.personId) };
+  });
+
+  app.post('/api/relations', async (req) => {
+    const body = parseOr400(
+      z.object({
+        fromId: z.string().min(1),
+        toId: z.string().min(1),
+        relCode: z.string().min(1),
+        label: z.string().optional(),
+        closeness: z.number().int().min(1).max(5).optional(),
+        note: z.string().optional(),
+      }),
+      req.body ?? {},
+    );
+    const r = deps.store.upsertRelation(body);
+    return { ok: true, id: r.id };
+  });
+
+  app.delete('/api/relations/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    deps.store.deleteRelation(id);
+    return { ok: true };
+  });
+
+  app.get('/api/graph', async (req) => {
+    const q = (req.query ?? {}) as { centerId?: string };
+    const all = deps.store.listPersons().map((p) => ({
+      id: p.id,
+      name: p.name,
+      createdAt: p.createdAt,
+      kind:
+        (deps.store.getProfileInfo(p.id)?.kind as string | undefined) ?? 'other',
+      info: deps.store.getProfileInfo(p.id) ?? {},
+    }));
+    // 中心：优先「本人」档案（relCode/kind=self），否则请求方指定，否则第一个
+    const selfPerson = all.find(
+      (p) =>
+        (p.info.relCode as string | undefined) === 'self' ||
+        p.kind === 'self',
+    );
+    const center = selfPerson ?? all.find((p) => p.id === q.centerId) ?? all[0];
+    // 边：从 profile_info 派生（我 → 每个档案），不依赖 person_relations
+    const relations = center
+      ? all
+          .filter((p) => p.id !== center.id)
+          .map((p) => ({
+            id: `derived-${p.id}`,
+            fromId: center.id,
+            toId: p.id,
+            relCode: (p.info.relCode as string | undefined) ?? 'other',
+            label: (p.info.label as string | undefined) ?? null,
+            closeness: (p.info.closeness as number | undefined) ?? 3,
+            note: null,
+            derived: true,
+          }))
+      : [];
+    return {
+      centerId: center?.id ?? null,
+      persons: all,
+      relations,
+      derived: true,
+    };
   });
 
   // ── sessions ────────────────────────────
@@ -206,7 +324,23 @@ export function createApp(deps: AppDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     const bundle = deps.store.getCaseBundle(id);
     if (!bundle) throw new AppError('INVALID_REQUEST', 'case not found');
-    return bundle;
+    const stage = deriveStage(bundle);
+    if (!bundle.case.dialogueStage) {
+      setStage(id, stage);
+    }
+    return { ...bundle, stage };
+  });
+
+  // 硬删案例（含九步/对话/回填/记忆），正在解卦则 409
+  app.delete('/api/cases/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const existing = deps.store.getCase(id);
+    if (!existing) throw new AppError('INVALID_REQUEST', 'case not found');
+    if (deps.locks.isBusy(id)) {
+      throw new AppError('CASE_IN_FLIGHT', 'case in flight');
+    }
+    const deleted = deps.store.deleteCaseCascade(id);
+    return { ok: true, deleted };
   });
 
   // ── cast ────────────────────────────────
@@ -363,6 +497,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
         cast,
         status: 'casted',
       });
+      setStage(id, 'cast');
       return { cast };
     } catch (e) {
       if (e instanceof AppError) throw e;
@@ -376,7 +511,15 @@ export function createApp(deps: AppDeps): FastifyInstance {
   // ── SSE helpers ─────────────────────────
   async function runSse(
     req: { raw: { on: (ev: string, cb: () => void) => void } },
-    res: { raw: { writeHead: (n: number, h: Record<string, string>) => void; write: (s: string) => void; end: () => void } },
+    res: {
+      raw: {
+        writeHead: (n: number, h: Record<string, string>) => void;
+        write: (s: string) => void;
+        end: () => void;
+        on: (ev: 'close' | 'error', cb: () => void) => void;
+        writableEnded: boolean;
+      };
+    },
     fn: (emit: (e: SSEEvent) => void, signal: AbortSignal) => Promise<void>,
   ): Promise<void> {
     res.raw.writeHead(200, {
@@ -386,7 +529,9 @@ export function createApp(deps: AppDeps): FastifyInstance {
     });
     res.raw.write(': ping\n\n');
     const ac = new AbortController();
-    req.raw.on('close', () => ac.abort());
+    // 注意：req.raw 的 close 是「请求体读完」，不是断开；用 res 的 close（见 disconnect.ts）
+    void req;
+    bindClientDisconnect(res.raw, ac);
     const timer = setInterval(() => {
       res.raw.write(': ping\n\n');
     }, 15_000);
@@ -407,16 +552,31 @@ export function createApp(deps: AppDeps): FastifyInstance {
     }
   }
 
+  function profileBrief(personId: string): string {
+    const i = deps.store.getProfileInfo(personId);
+    if (!i) return '';
+    const bits = [
+      i.name ? `称谓：${i.name}` : '',
+      i.relCode ? `关系：${relZh(String(i.relCode))}` : '',
+      i.closeness != null
+        ? `亲疏：${closenessZh(Number(i.closeness))}`
+        : '',
+      i.stage ? `阶段：${i.stage}` : '',
+      i.cares ? `常问：${i.cares}` : '',
+      i.workStyle ? `处事：${i.workStyle}` : '',
+      i.nature ? `性格：${i.nature}` : '',
+      i.taboo ? `忌讳：${i.taboo}` : '',
+    ].filter(Boolean);
+    return bits.length ? `\n【档案信息】${bits.join('；')}` : '';
+  }
+
   function speakingOf(
     store: { getPerson(id: string): { persona?: string; tone?: string } | null },
     personId: string,
-  ): { persona?: 'feiyu' | 'xiansheng'; tone?: string } {
+  ): { persona?: 'feiyu'; tone?: string } {
     const p = store.getPerson(personId);
     return {
-      persona:
-        p?.persona === 'xiansheng' || p?.persona === 'feiyu'
-          ? p.persona
-          : undefined,
+      persona: 'feiyu',
       tone: p?.tone,
     };
   }
@@ -430,11 +590,82 @@ export function createApp(deps: AppDeps): FastifyInstance {
     return bundle;
   }
 
+  function setStage(id: string, next: DialogueStage): void {
+    const cur = deps.store.getCase(id)?.dialogueStage;
+    if (!canTransition(cur, next)) {
+      console.warn(`[stage] illegal ${String(cur)} -> ${next} (case ${id})`);
+      return;
+    }
+    deps.store.setCaseStage(id, next);
+  }
+
   function emitFromStore(
     emit: (e: SSEEvent) => void,
   ): (e: SSEEvent) => void {
     return emit;
   }
+
+  // ── 起卦前“聊一句”（B：precast clarify）─────────
+  app.get('/api/cases/:id/precast-ask', async (req) => {
+    const { id } = req.params as { id: string };
+    const bundle = deps.store.getCaseBundle(id);
+    if (!bundle) throw new AppError('INVALID_REQUEST', 'case not found');
+    if (bundle.case.cast) return { ask: null };
+    const ctx = {
+      question: bundle.case.input.question ?? '',
+      category: bundle.case.input.category,
+    };
+    const ask = pickBackgroundAsk(3, ctx, []) ?? fallbackAsk(3);
+    setStage(id, 'clarify');
+    return { ask };
+  });
+
+  app.post('/api/cases/:id/precast', async (req) => {
+    const { id } = req.params as { id: string };
+    const bundle = deps.store.getCaseBundle(id);
+    if (!bundle) throw new AppError('INVALID_REQUEST', 'case not found');
+    const body = parseOr400(
+      z.object({ answer: z.string().optional(), skip: z.boolean().optional() }),
+      req.body ?? {},
+    );
+    const existing = deps.store.listMessages(bundle.case.sessionId, id);
+    if (existing.some((m) => m.role === 'system' && m.content.startsWith('__bg_asked__:precast'))) {
+      return { ok: true, already: true };
+    }
+    const ask = pickBackgroundAsk(
+      3,
+      {
+        question: bundle.case.input.question ?? '',
+        category: bundle.case.input.category,
+      },
+      [],
+    ) ?? fallbackAsk(3);
+    const q = bundle.case.input.question ?? '';
+    deps.store.appendMessage({
+      sessionId: bundle.case.sessionId,
+      caseId: id,
+      role: 'assistant',
+      content: `你问的是「${q}」。起卦前我先多嘴问一句：${ask.question}`,
+    });
+    const answer = (body.answer ?? '').trim();
+    if (answer && !body.skip) {
+      deps.store.appendMessage({
+        sessionId: bundle.case.sessionId,
+        caseId: id,
+        role: 'user',
+        content: answer,
+      });
+      deps.store.updateCaseContextNote(id, answer);
+    }
+    deps.store.appendMessage({
+      sessionId: bundle.case.sessionId,
+      caseId: id,
+      role: 'system',
+      content: '__bg_asked__:precast',
+    });
+    setStage(id, 'cast');
+    return { ok: true, answer: answer || null };
+  });
 
   // ── interpret / resume / revise ─────────
   app.post('/api/cases/:id/interpret', async (req, res) => {
@@ -444,7 +675,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
       z.object({ fromStep: z.number().int().min(1).max(9).optional() }),
       req.body ?? {},
     );
-    await runSse(req as never, res as never, async (emit) => {
+    await runSse(req as never, res as never, async (emit, signal) => {
       const memoryPrompt = buildPersonMemoryPrompt(
         deps.store,
         bundle.case.personId,
@@ -453,7 +684,8 @@ export function createApp(deps: AppDeps): FastifyInstance {
           category: bundle.case.input.category,
           guaName: bundle.case.cast?.ben?.name,
         },
-      );
+      ) + profileBrief(bundle.case.personId);
+      setStage(id, 'interpret');
       const result = await deps.interpret.run({
         case: bundle.case,
         cast: bundle.case.cast,
@@ -461,11 +693,17 @@ export function createApp(deps: AppDeps): FastifyInstance {
         knowledge: deps.knowledge,
         llm: deps.llm,
         offline: deps.config.offline,
+        signal,
         emit: emitFromStore(emit),
         fromStep: body.fromStep,
         memoryPrompt,
         ...speakingOf(deps.store, bundle.case.personId),
       });
+      setStage(id, result.done ? 'verdict' : 'clarify');
+      // 等待背景补充：明确告知客户端「已暂停」，不要让它停在"解卦中"
+      if (!result.done) {
+        emit({ type: 'paused', caseId: id, data: {} });
+      }
       if (result.done && result.verdict) {
         const m = writeRound(deps.store, {
           personId: bundle.case.personId,
@@ -477,10 +715,19 @@ export function createApp(deps: AppDeps): FastifyInstance {
             : '',
           conclusionBrief: result.verdict.summary.slice(0, 80),
         });
+        const refl = writeReflection(deps.store, {
+          personId: bundle.case.personId,
+          sessionId: bundle.case.sessionId,
+          caseId: id,
+          question: bundle.case.input.question,
+          gradeLabel: result.verdict.grade,
+          summary: result.verdict.summary,
+          advice: result.verdict.advice,
+        });
         emit({
           type: 'memory_written',
           caseId: id,
-          data: { memoryIds: [m.id] },
+          data: { memoryIds: [m.id, refl.id] },
         });
         void refreshProfileCard({
           store: deps.store,
@@ -507,7 +754,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
       }),
       req.body ?? {},
     );
-    await runSse(req as never, res as never, async (emit) => {
+    await runSse(req as never, res as never, async (emit, signal) => {
       const memoryPrompt = buildPersonMemoryPrompt(
         deps.store,
         bundle.case.personId,
@@ -516,19 +763,55 @@ export function createApp(deps: AppDeps): FastifyInstance {
           category: bundle.case.input.category,
           guaName: bundle.case.cast?.ben?.name,
         },
-      );
-      await deps.interpret.resume({
+      ) + profileBrief(bundle.case.personId);
+      setStage(id, 'interpret');
+      const result = await deps.interpret.resume({
         case: bundle.case,
         cast: bundle.case.cast,
         store: deps.store,
         knowledge: deps.knowledge,
         llm: deps.llm,
         offline: deps.config.offline,
+        signal,
         emit: emitFromStore(emit),
         answers: body.answers,
         memoryPrompt,
         ...speakingOf(deps.store, bundle.case.personId),
       });
+      setStage(id, result.done ? 'verdict' : 'clarify');
+      // P3：续跑完成同样落记忆与画像（此前主路径漏写）
+      if (result.done && result.verdict) {
+        const m = writeRound(deps.store, {
+          personId: bundle.case.personId,
+          sessionId: bundle.case.sessionId,
+          caseId: id,
+          topic: bundle.case.input.question,
+          castBrief: bundle.case.cast
+            ? `${bundle.case.cast.ben.name}之${bundle.case.cast.bian.name}，动${bundle.case.cast.movingYao}`
+            : '',
+          conclusionBrief: result.verdict.summary.slice(0, 80),
+        });
+        const refl = writeReflection(deps.store, {
+          personId: bundle.case.personId,
+          sessionId: bundle.case.sessionId,
+          caseId: id,
+          question: bundle.case.input.question,
+          gradeLabel: result.verdict.grade,
+          summary: result.verdict.summary,
+          advice: result.verdict.advice,
+        });
+        emit({
+          type: 'memory_written',
+          caseId: id,
+          data: { memoryIds: [m.id, refl.id] },
+        });
+        void refreshProfileCard({
+          store: deps.store,
+          personId: bundle.case.personId,
+          llm: deps.llm,
+          offline: deps.config.offline,
+        }).catch(() => undefined);
+      }
     });
   });
 
@@ -542,7 +825,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
       }),
       req.body,
     );
-    await runSse(req as never, res as never, async (emit) => {
+    await runSse(req as never, res as never, async (emit, signal) => {
       const memoryPrompt = buildPersonMemoryPrompt(
         deps.store,
         bundle.case.personId,
@@ -551,7 +834,8 @@ export function createApp(deps: AppDeps): FastifyInstance {
           category: bundle.case.input.category,
           guaName: bundle.case.cast?.ben?.name,
         },
-      );
+      ) + profileBrief(bundle.case.personId);
+      setStage(id, 'interpret');
       await deps.interpret.revise({
         case: bundle.case,
         cast: bundle.case.cast,
@@ -559,6 +843,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
         knowledge: deps.knowledge,
         llm: deps.llm,
         offline: deps.config.offline,
+        signal,
         emit: emitFromStore(emit),
         stepId: body.stepId as never,
         message: body.message,
@@ -578,12 +863,13 @@ export function createApp(deps: AppDeps): FastifyInstance {
     if (deps.config.offline) {
       throw new AppError('NO_API_KEY', 'follow-up requires api key');
     }
-    const memoryPrompt = buildPersonMemoryPrompt(deps.store, bundle.case.personId, {
-      question: bundle.case.input.question,
-      category: bundle.case.input.category,
-      guaName: bundle.case.cast?.ben?.name,
-    });
-    await runSse(req as never, res as never, async (emit) => {
+    const memoryPrompt =
+      buildPersonMemoryPrompt(deps.store, bundle.case.personId, {
+        question: bundle.case.input.question,
+        category: bundle.case.input.category,
+        guaName: bundle.case.cast?.ben?.name,
+      }) + profileBrief(bundle.case.personId);
+    await runSse(req as never, res as never, async (emit, signal) => {
       const r = await deps.interpret.followUp({
         case: bundle.case,
         cast: bundle.case.cast,
@@ -592,6 +878,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
         knowledge: deps.knowledge,
         llm: deps.llm,
         memoryPrompt,
+        signal,
         ...speakingOf(deps.store, bundle.case.personId),
         emit: emitFromStore(emit),
       });
@@ -617,6 +904,7 @@ export function createApp(deps: AppDeps): FastifyInstance {
 
   app.post('/api/cases/:id/feedback', async (req) => {
     const { id } = req.params as { id: string };
+    setStage(id, 'close');
     const existing = deps.store.getCaseBundle(id);
     if (!existing) {
       throw new AppError('INVALID_REQUEST', 'case not found');

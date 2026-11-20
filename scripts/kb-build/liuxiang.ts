@@ -39,6 +39,42 @@ function splitWords(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** 粘连键剥离（§4.11b 数据契约）：「行位一四九」→ 行位: 一四九 */
+const GLUE_KEY = /^(行位)([一二三四五六七八九十百零]+)$/;
+
+/**
+ * 解析行内多属性段（§4.11b 数据契约）：
+ * 先按「。」拆段 → 段内「键：值」拆键值 → 值按「、」拆词 → 粘连键剥离归位。
+ * 无键段落继承本行主类目。基础行为：单属性行结果与旧版一致。
+ */
+export function parseAttrSegments(
+  primary: string,
+  rest: string,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const push = (k: string, v: string) => {
+    const t = v.trim();
+    if (!t) return;
+    (out[k] ??= []).push(t);
+  };
+  for (const seg of rest.split(/[。．.]/)) {
+    const s = seg.trim();
+    if (!s) continue;
+    const m = s.match(/^([^：:]+)[：:](.*)$/);
+    const key = m ? m[1]!.trim() : primary;
+    const values = m ? m[2]! : s;
+    for (const tok of splitWords(values)) {
+      const glue = tok.match(GLUE_KEY);
+      if (glue) {
+        push(glue[1]!, glue[2]!);
+      } else {
+        push(key, tok);
+      }
+    }
+  }
+  return out;
+}
+
 /** 从 md 抽出 §4.2 正文（到 §4.3 或下一章） */
 export function extractSection42(md: string): string {
   const start = md.indexOf('## 4.2 ');
@@ -69,10 +105,12 @@ export function parseLiuXiang(
     const item = line.match(/^-\s*([^：:]+)[：:]\s*(.*)$/);
     if (!item || !current) continue;
     const cat = item[1]!.trim();
-    const words = splitWords(item[2]!.replace(/[。．.]$/, ''));
-    if (!cat || words.length === 0) continue;
+    const rest = item[2]!.replace(/[。．.]\s*$/, '');
+    if (!cat || !rest) continue;
     const bag = gua[current]!;
-    bag[cat] = [...(bag[cat] ?? []), ...words];
+    for (const [k, vals] of Object.entries(parseAttrSegments(cat, rest))) {
+      bag[k] = [...(bag[k] ?? []), ...vals];
+    }
   }
 
   const out = {} as LiuXiangFile['gua'];

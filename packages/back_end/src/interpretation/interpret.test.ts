@@ -131,11 +131,27 @@ describe('need_input 立即返回 + 锁释放', () => {
       emit: s.emit,
       offline: false,
     });
-    // Mock 会在步3 发 need_input
+    // Mock 会在步3 发 need_input（B3：槽位化 payload）
     expect(r.done).toBe(false);
     expect(locks.isBusy(s.case.id)).toBe(false);
-    expect(s.events.some((e) => e.type === 'need_input')).toBe(true);
+    const firstNeed = s.events.find((e) => e.type === 'need_input') as
+      | {
+          data: {
+            stepId?: number;
+            slot?: string;
+            why?: string;
+            suggested?: string[];
+            examples?: string[];
+          };
+        }
+      | undefined;
+    expect(firstNeed?.data.stepId).toBe(3);
+    expect(firstNeed?.data.slot).toBeTruthy();
+    expect(firstNeed?.data.why).toBeTruthy();
+    expect(firstNeed?.data.suggested?.length ?? 0).toBeGreaterThan(1);
+    expect(firstNeed?.data.examples?.length ?? 0).toBeGreaterThan(0);
 
+    // 步 3 回答后，续跑会补问步 7（补上后才有第二次 need）
     const r2 = await resumeInterpret({
       case: s.case,
       cast: makeCast('number3'),
@@ -143,9 +159,50 @@ describe('need_input 立即返回 + 锁释放', () => {
       knowledge,
       llm,
       emit: s.emit,
-      answers: [],
+      answers: [{ stepId: 3, text: '' }],
     });
-    expect(r2.done).toBe(true);
+    expect(r2.done).toBe(false);
+    expect(
+      s.events.some(
+        (e) =>
+          e.type === 'need_input' &&
+          (e.data as { stepId?: number }).stepId === 7,
+      ),
+    ).toBe(true);
+
+    // 回答步 7 后完成，且不会再次重复问
+    const r3 = await resumeInterpret({
+      case: s.case,
+      cast: makeCast('number3'),
+      store: s.store,
+      knowledge,
+      llm,
+      emit: s.emit,
+      answers: [{ stepId: 7, text: '' }],
+    });
+    expect(r3.done).toBe(true);
+  });
+});
+
+describe('客户端断开（AbortSignal）', () => {
+  it('已 abort → 抛 LLM_ABORT 且释放锁，不写步骤', async () => {
+    const s = setup();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(
+      runInterpret({
+        case: s.case,
+        cast: makeCast('number3'),
+        store: s.store,
+        knowledge,
+        llm: new MockProvider(),
+        emit: s.emit,
+        offline: false,
+        signal: ac.signal,
+      }),
+    ).rejects.toMatchObject({ code: 'LLM_ABORT' });
+    expect(locks.isBusy(s.case.id)).toBe(false);
+    expect(s.store.getSteps(s.case.id).length).toBe(0);
   });
 });
 

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 
+import { toast } from './ui';
+
 import {
   gradeClass,
   gradeLabel,
@@ -7,6 +9,7 @@ import {
   questionBrief,
 } from '../app/labels';
 import { exportSignPng } from './signExport';
+import { YaoBar, yaoToV } from './HexBoard';
 
 export type SignPoem = {
   text?: string;
@@ -27,9 +30,23 @@ export type SignBoardProps = {
   sensitive?: boolean;
   /** 流式中：有 grade 无新诗 */
   poemPending?: boolean;
+  /** 案例 id：用于「开签四拍只播一次」 */
+  caseKey?: string;
+  /** 签号（该档案第 N 例），可选 */
+  signNo?: number | null;
 };
 
 const FALLBACK_NOTE = '诗签暂缺';
+
+const GAN = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
+const ZHI = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+const SEASON = ['冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬', '冬'];
+
+/** 落款：干支年 · 季（P2；纯展示，不参与任何算式） */
+function colophon(d = new Date()): string {
+  const y = d.getFullYear();
+  return `${GAN[(y - 4) % 10]}${ZHI[(y - 4) % 12]}年 · ${SEASON[d.getMonth()]}`;
+}
 const DISCLAIMER =
   '仅供娱乐与学习，不构成医疗、法律或投资建议。';
 
@@ -78,6 +95,7 @@ function BaguaRing() {
     <svg
       className="sign-ring"
       viewBox="0 0 200 200"
+      preserveAspectRatio="none"
       aria-hidden="true"
       focusable="false"
     >
@@ -147,9 +165,23 @@ export function SignBoard({
   question,
   sensitive,
   poemPending,
+  caseKey,
+  signNo,
 }: SignBoardProps) {
   const [copied, setCopied] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // 开签四拍：每案例只播一次（会话内记住）
+  const [animate] = useState(() => {
+    if (!caseKey) return true;
+    try {
+      const k = `meihua.sign.opened.${caseKey}`;
+      if (sessionStorage.getItem(k)) return false;
+      sessionStorage.setItem(k, '1');
+      return true;
+    } catch {
+      return true;
+    }
+  });
   const n = useMemo(() => normalizePoem(poem), [poem]);
   const brief = questionBrief(question);
   const showDisclaimer = isSensitiveQuestion(question, sensitive);
@@ -162,7 +194,13 @@ export function SignBoard({
       const pos = idx + 1;
       const v = lines[idx] ?? 8;
       const yang = v === 7 || v === 9;
-      return { pos, yang, moving: ben.movingYao === pos };
+      return {
+        pos,
+        yang,
+        moving: ben.movingYao === pos,
+        /** 连续形变参数（§4.6）：动爻从对侧形变落位 */
+        v: yaoToV(v),
+      };
     });
   }, [ben.lines, ben.movingYao]);
 
@@ -205,16 +243,18 @@ export function SignBoard({
         brief,
         showDisclaimer,
         disclaimer: DISCLAIMER,
+        colophon: colophon(),
+        signNo: signNo ?? undefined,
       });
     } catch {
-      /* 导出失败静默；可由调用方 toast */
+      toast('error', '导出失败：可重试，或直接截屏保存');
     } finally {
       setExporting(false);
     }
   };
 
   return (
-    <article className="signboard sign-open" aria-label="签牌">
+    <article className={`signboard${animate ? ' sign-open' : ''}`} aria-label="签牌">
       <div className="sign-decor" aria-hidden="true">
         <CornerOrnament pos="tl" />
         <CornerOrnament pos="tr" />
@@ -261,24 +301,15 @@ export function SignBoard({
                 key={r.pos}
                 className={`sign-yao-line${r.yang ? ' yang' : ' yin'}${r.moving ? ' moving' : ''}`}
               >
-                {r.yang ? (
-                  <i className="bar solid" />
-                ) : (
-                  <>
-                    <i className="bar" />
-                    <i className="bar" />
-                  </>
-                )}
-                {r.moving ? (
-                  <span className="sign-dong-out" title={`动爻 ${r.pos}`}>
-                    {mLabel || `动${r.pos}`}
-                  </span>
-                ) : null}
+                <YaoBar v={r.v} morph={r.moving} />
               </div>
             ))}
           </div>
         </div>
-        <p className="sign-gua-name">{ben.name || '—'}</p>
+        <p className="sign-gua-name">
+          {ben.name || '—'}
+          {mLabel ? <span className="sign-dong-inline">{mLabel}</span> : null}
+        </p>
         <div className="sign-gold-rule" aria-hidden="true" />
       </div>
 
@@ -303,6 +334,10 @@ export function SignBoard({
       </div>
 
       <footer className="sign-foot">
+        <p className="sign-colophon">
+          {colophon()}
+          {signNo ? <span className="sign-no">第 {signNo} 签</span> : null}
+        </p>
         {brief ? (
           <p className="sign-brief">
             <span className="sign-wen-seal" aria-hidden="true">

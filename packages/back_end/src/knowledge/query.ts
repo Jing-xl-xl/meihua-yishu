@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type {
-  AnchorRef,
   Gua,
   HexagramData,
   JieqiMonthKey,
@@ -154,13 +153,6 @@ export function makeQuery(index: KnowledgeIndex) {
       } catch {
         return {};
       }
-    },
-
-    anchor(id: string): AnchorRef {
-      const map = lazyJson<Record<string, AnchorRef>>('corpus/anchors.json');
-      const a = map[id];
-      if (!a) throw new Error(`anchor not found: ${id}`);
-      return a;
     },
   };
 }

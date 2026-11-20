@@ -160,3 +160,34 @@ export function writeSummaryRow(
   store.insertMemory(entry);
   return entry;
 }
+
+/** 每完成一卦写一条「反思/印象」（rule-based，不额外调 LLM）；同案例只写一次由调用方保证 */
+export function writeReflection(
+  store: Store,
+  ctx: {
+    personId: string;
+    sessionId: string;
+    caseId: string;
+    question: string;
+    gradeLabel: string;
+    summary: string;
+    advice?: string[];
+  },
+): MemoryEntry {
+  const entry: MemoryEntry = {
+    id: newId(),
+    personId: ctx.personId,
+    sessionId: ctx.sessionId,
+    caseId: ctx.caseId,
+    type: 'summary',
+    payload: {
+      topic: ctx.question.slice(0, 40),
+      text: `【反思】${ctx.gradeLabel}：${ctx.summary.slice(0, 80)}`,
+      conclusionBrief: ctx.advice?.[0] ? `先做：${ctx.advice[0].slice(0, 50)}` : '',
+    },
+    tags: [...autoTags({ question: ctx.question }), '反思'],
+    createdAt: new Date().toISOString(),
+  };
+  store.insertMemory(entry);
+  return entry;
+}

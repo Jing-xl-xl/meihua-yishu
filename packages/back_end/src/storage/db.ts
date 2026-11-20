@@ -8,6 +8,8 @@ import { MIGRATIONS_002 } from './migrations/002_session_route_rounds';
 import { MIGRATIONS_003 } from './migrations/003_persons_role_card';
 import { MIGRATIONS_004 } from './migrations/004_memories_anchor';
 import { MIGRATIONS_005 } from './migrations/005_persons_persona_tone';
+import { MIGRATIONS_006 } from './migrations/006_persons_profile_relations';
+import { MIGRATIONS_007 } from './migrations/007_cases_dialogue_stage';
 
 export type Db = Database.Database;
 
@@ -43,6 +45,8 @@ export function migrate(db: Db): void {
     ...MIGRATIONS_003,
     ...MIGRATIONS_004,
     ...MIGRATIONS_005,
+    ...MIGRATIONS_006,
+    ...MIGRATIONS_007,
   ]) {
     if (applied.has(m.version)) continue;
     const run = db.transaction(() => {

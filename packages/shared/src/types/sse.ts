@@ -57,7 +57,17 @@ export type SSEEvent =
   | {
       type: 'need_input';
       caseId: string;
-      data: { stepId?: StepId; question: string; options?: string[] };
+      data: {
+        stepId?: StepId;
+        question: string;
+        options?: string[];
+        /** B3：槽位化提问 */
+        slot?: string;
+        why?: string;
+        examples?: string[];
+        suggested?: string[];
+        canSkip?: boolean;
+      };
     }
   | { type: 'step_revised'; caseId: string; data: StepState }
   | { type: 'verdict'; caseId: string; data: Verdict }
@@ -75,4 +85,10 @@ export type SSEEvent =
       type: 'done';
       caseId: string;
       data: { caseId: string; sessionId: string };
+    }
+  | {
+      /** 等待用户补充背景：解卦挂起，未结束 */
+      type: 'paused';
+      caseId: string;
+      data: { stepId?: StepId };
     };

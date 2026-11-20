@@ -10,6 +10,7 @@ import {
   STEP_TITLES,
   GUA_WUXING,
   GUA_NAME_ZH,
+  elementZh,
   relationFromYongTi,
 } from '@meihua/shared';
 
@@ -60,7 +61,7 @@ export function ruleStep4(
       stepId: 4,
       status: 'confirmed',
       conclusion: text,
-      evidence: `用${cast.yong}对体${cast.ti}`,
+      evidence: `用${GUA_NAME_ZH[cast.yong] ?? cast.yong}（${elementZh(yongEl)}）对体${GUA_NAME_ZH[cast.ti] ?? cast.ti}（${elementZh(tiEl)}）`,
       sources: [],
       updatedAt: nowIso(),
     },
@@ -107,7 +108,7 @@ export function ruleStep5(cast: CastResult, k: KnowledgeQuery): StepState {
     stepId: 5,
     status: 'confirmed',
     conclusion: `${key}月：${note}`,
-    evidence: `strong=${ws.strong.join(',')} weak=${ws.weak.join(',')}`,
+    evidence: `当月旺：${ws.strong.map((g) => GUA_NAME_ZH[g] ?? g).join('、') || '无'}；当月衰：${ws.weak.map((g) => GUA_NAME_ZH[g] ?? g).join('、') || '无'}`,
     sources: [],
     updatedAt: nowIso(),
   };
