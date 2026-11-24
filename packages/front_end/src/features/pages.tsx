@@ -31,7 +31,6 @@ import { HexBoard, dualToLines, guaZh } from '../components/HexBoard';
 import { SignModal } from '../components/SignModal';
 import { ProfileRadar } from '../components/ProfileRadar';
 import { RelationGraph } from '../components/RelationGraph';
-import { STATUS_LABEL, STEP_TITLES } from '../app/labels';
 
 /** 简单去 Markdown 符号（对话记录展示用） */
 function plainTextSafe(s: string): string {
@@ -55,10 +54,6 @@ function prettyGuaText(s: string): string {
       .join(`互${zh}`);
   }
   return out;
-}
-
-function stepStatusZh(s: string): string {
-  return STATUS_LABEL[s] ?? s;
 }
 
 type Props = {
@@ -1325,38 +1320,9 @@ export function CasesPage({
               )}
             </div>
           </div>
-          <ol className="step-list">
-            {detail.steps?.map((s) => (
-              <li
-                key={s.stepId}
-                className={`step-card${devSteps.includes(s.stepId) ? ' devstep' : ''}${
-                  s.status === 'need_key' || s.status === 'skipped_by_method' ? ' muted-step' : ''
-                }`}
-              >
-                <button type="button" className="step-row">
-                  <div className="step-brief">
-                    <b className="step-title">
-                      {s.stepId}. {STEP_TITLES[s.stepId] ?? ''}
-                    </b>
-                    <span className="step-sum">
-                      {prettyGuaText(s.conclusion || '')}
-                    </span>
-                  </div>
-                  <span className={`badge ${
-                    s.status === 'confirmed'
-                      ? 'ok'
-                      : s.status === 'failed'
-                        ? 'danger'
-                        : s.status === 'need_key' || s.status === 'skipped_by_method'
-                          ? 'warn'
-                          : ''
-                  }`}>
-                    {stepStatusZh(s.status)}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
+          <p className="hint">
+            九步详情可在上方「在问卦台打开」中查看。
+          </p>
           {showForm && (
             <div className="panel">
               <h4>回填最终结果</h4>
