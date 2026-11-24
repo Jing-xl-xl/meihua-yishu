@@ -4770,3 +4770,157 @@ button.primary:active:not(:disabled)::after {
     min-height: 0;
   }
 }
+
+/* 类象全表 v2：左导读 + 分组 + 两列类目块 + 搜索 */
+.lx-layout {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 10px;
+}
+.lx-nav {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+  padding-right: 8px;
+  border-right: 1px solid var(--line);
+}
+.lx-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+.lx-nav-group {
+  margin-bottom: 10px;
+}
+.lx-nav-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+  font-family: 'Songti SC', 'STSong', serif;
+  font-size: 13px;
+  color: var(--ink-jiao);
+  text-decoration: none;
+}
+.lx-nav-title span {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 10px;
+  color: var(--ink-qing);
+}
+.lx-nav-cat {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0 2px 8px;
+  font-size: 11.5px;
+  color: var(--ink-dan);
+  text-decoration: none;
+}
+.lx-nav-cat:hover,
+.lx-nav-title:hover {
+  color: var(--cinnabar-deep);
+}
+.lx-nav-cat span {
+  font-size: 10px;
+  color: var(--ink-qing);
+}
+.lx-content {
+  min-width: 0;
+}
+.lx-group {
+  margin-bottom: 16px;
+  scroll-margin-top: 12px;
+}
+.lx-group-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+  font-weight: 600;
+}
+.lx-blocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+}
+.lx-block {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  scroll-margin-top: 12px;
+}
+.lx-block.wide {
+  grid-column: 1 / -1;
+}
+/* 覆盖旧的行式类目标题 */
+.lx-block .lx-cat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex: none;
+  width: auto;
+  margin: 0 0 4px;
+  padding: 0 0 4px 7px;
+  border: none;
+  border-left: 2px solid var(--gold);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  color: var(--ink-jiao);
+}
+.lx-block .lx-cat span {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ink-qing);
+}
+.lx-block .lx-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 5px;
+  align-items: flex-start;
+}
+.lx-block .lx-chip {
+  border-color: var(--line);
+  background: transparent;
+  padding: 1px 7px;
+}
+.lx-block .lx-plain {
+  display: block;
+  width: 100%;
+  margin: 1px 0;
+}
+@media (max-width: 900px) {
+  .lx-layout {
+    grid-template-columns: 1fr;
+  }
+  .lx-nav {
+    position: static;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 0 0 8px;
+  }
+  .lx-nav-group {
+    min-width: 140px;
+    margin-bottom: 0;
+  }
+  .lx-search {
+    min-width: 180px;
+    width: auto;
+  }
+  .lx-blocks {
+    grid-template-columns: 1fr;
+  }
+  .lx-block.wide {
+    grid-column: auto;
+  }
+}

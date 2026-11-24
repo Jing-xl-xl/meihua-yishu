@@ -2115,6 +2115,39 @@ function knowledgeLines(hex: Record<string, unknown>): number[] {
   return [];
 }
 
+/** 类象分组（按类目名归组；未匹配的进“其他”） */
+const LX_GROUP_DEFS: Array<{ id: string; title: string; cats: string[] }> = [
+  {
+    id: 'nature',
+    title: '自然',
+    cats: ['天时', '地理', '方道', '时序', '动物', '静物', '五色', '五味', '数目'],
+  },
+  {
+    id: 'people',
+    title: '人',
+    cats: ['人物', '人事', '身体', '婚姻', '家宅', '屋舍', '饮食'],
+  },
+  {
+    id: 'affairs',
+    title: '事',
+    cats: [
+      '求名',
+      '谋旺',
+      '姓字',
+      '交易',
+      '求利',
+      '出行',
+      '谒见',
+      '疾病',
+      '官讼',
+      '坟墓',
+      '生产',
+      '字姓',
+      '行位',
+    ],
+  },
+];
+
 const BAGUA_RING: Array<{ id: Gua; zh: string; wx: string; x: number; y: number }> = [
   { id: 'qian', zh: '乾', wx: '金', x: 400, y: 40 },
   { id: 'xun', zh: '巽', wx: '木', x: 560, y: 100 },
@@ -2502,6 +2535,7 @@ export function KnowledgePage() {
   const [kMode, setKMode] = useState<'hex' | 'liuxiang'>('hex');
   const [lxGua, setLxGua] = useState('qian');
   const [lxBag, setLxBag] = useState<Record<string, string[]> | null>(null);
+  const [lxQ, setLxQ] = useState('');
   const [q, setQ] = useState('');
   const [upperF, setUpperF] = useState('all');
   const [lowerF, setLowerF] = useState('all');
@@ -2610,6 +2644,37 @@ export function KnowledgePage() {
     };
   }, [kMode, lxGua]);
 
+
+  const lxGroups = useMemo(() => {
+    const bag = lxBag ?? {};
+    const q = lxQ.trim();
+    const known = new Set(LX_GROUP_DEFS.flatMap((d) => d.cats));
+    const defs = [
+      ...LX_GROUP_DEFS,
+      {
+        id: 'other',
+        title: '其他',
+        cats: Object.keys(bag).filter((c) => !known.has(c)),
+      },
+    ];
+    return defs
+      .map((def) => {
+        const items = def.cats
+          .filter((cat) => bag[cat])
+          .map((cat) => {
+            const all = bag[cat] ?? [];
+            const words = q ? all.filter((w) => w.includes(q)) : all;
+            return { cat, total: all.length, words };
+          })
+          .filter((it) => it.words.length > 0);
+        return {
+          ...def,
+          items,
+          total: items.reduce((n, it) => n + it.words.length, 0),
+        };
+      })
+      .filter((g) => g.items.length > 0);
+  }, [lxBag, lxQ]);
 
   return (
     <div className="page-fade knowledge-page">
@@ -2728,35 +2793,82 @@ export function KnowledgePage() {
           ) : Object.keys(lxBag).length === 0 ? (
             <p className="muted">类目库暂缺或为空（请先构建知识库）</p>
           ) : (
-            <>
-              <nav className="lx-index" aria-label="类目索引">
-                {Object.keys(lxBag).map((cat) => (
-                  <a key={cat} href={`#lx-${cat}`} className="lx-index-item">
-                    {cat}
-                  </a>
+            <div className="lx-layout">
+              <aside className="lx-nav" aria-label="类象导读">
+                <input
+                  className="lx-search"
+                  placeholder="搜索类象词…"
+                  value={lxQ}
+                  onChange={(e) => setLxQ(e.target.value)}
+                />
+                {lxGroups.map((g) => (
+                  <div key={g.id} className="lx-nav-group">
+                    <a href={`#lx-g-${g.id}`} className="lx-nav-title">
+                      {g.title}
+                      <span>{g.total}</span>
+                    </a>
+                    {g.items.map((it) => (
+                      <a
+                        key={it.cat}
+                        href={`#lx-${it.cat}`}
+                        className="lx-nav-cat"
+                      >
+                        {it.cat}
+                        <span>
+                          {it.words.length}
+                          {lxQ.trim() ? `/${it.total}` : ''}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
                 ))}
-              </nav>
-              <div className="lx-rows">
-                {Object.entries(lxBag).map(([cat, words]) => (
-                  <section key={cat} id={`lx-${cat}`} className="lx-row">
-                    <h4 className="lx-cat">{cat}</h4>
-                    <div className="lx-words">
-                      {words.map((w, i) =>
-                        w.length <= 6 && !w.includes('。') && !w.includes('：') ? (
-                          <span key={i} className="lx-chip">
-                            {w}
-                          </span>
-                        ) : (
-                          <span key={i} className="lx-plain">
-                            {w}
-                          </span>
-                        ),
-                      )}
+                {!lxGroups.length && (
+                  <p className="hint">无匹配，换个词试试。</p>
+                )}
+              </aside>
+              <div className="lx-content">
+                {lxGroups.map((g) => (
+                  <section key={g.id} id={`lx-g-${g.id}`} className="lx-group">
+                    <h4 className="lx-group-title">{g.title}</h4>
+                    <div className="lx-blocks">
+                      {g.items.map((it) => (
+                        <section
+                          key={it.cat}
+                          id={`lx-${it.cat}`}
+                          className={`lx-block${it.words.length > 12 ? ' wide' : ''}`}
+                        >
+                          <h5 className="lx-cat">
+                            {it.cat}
+                            <span>
+                              {it.words.length}
+                              {lxQ.trim() ? `/${it.total}` : ''}
+                            </span>
+                          </h5>
+                          <div className="lx-words">
+                            {it.words.map((w, i) =>
+                              w.length <= 6 &&
+                              !w.includes('。') &&
+                              !w.includes('：') ? (
+                                <span key={i} className="lx-chip">
+                                  {w}
+                                </span>
+                              ) : (
+                                <span key={i} className="lx-plain">
+                                  {w}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        </section>
+                      ))}
                     </div>
                   </section>
                 ))}
+                {!lxGroups.length && (
+                  <p className="hint">没有匹配的类象词。</p>
+                )}
               </div>
-            </>
+            </div>
           )}
         </div>
       ) : (
