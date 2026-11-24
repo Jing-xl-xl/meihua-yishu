@@ -4569,3 +4569,66 @@ button.primary:active:not(:disabled)::after {
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+
+/* P0：首屏一句 / 九步折叠瘦身+进度 / 动爻闪一次 */
+.home-intro {
+  margin: 0 0 8px;
+  color: var(--ink-zhong);
+}
+.step-card:not(.open) .step-sum {
+  display: none;
+}
+.step-progress {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 6px;
+}
+.step-progress .seg {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.step-progress .seg.done {
+  background: var(--ink-zhong);
+}
+.step-progress .seg.current {
+  background: var(--cinnabar);
+  animation: segPulse 1.2s ease-in-out infinite;
+}
+.step-progress .seg.bad {
+  background: var(--cinnabar-deep);
+  opacity: 0.7;
+}
+.step-progress .seg.skip {
+  background: var(--line-strong);
+}
+@keyframes segPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.yao-line.moving .bar {
+  animation: movingFlash 900ms ease-out 1;
+}
+@keyframes movingFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(178, 58, 46, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 5px rgba(178, 58, 46, 0.12);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(178, 58, 46, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yao-line.moving .bar,
+  .step-progress .seg.current {
+    animation: none;
+  }
+}

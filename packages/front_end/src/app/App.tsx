@@ -13,6 +13,7 @@ import { PERSON_TO_GUA } from '../api/methods';
 import { HexBoard, GUA_ORDER, dualToLines, guaZh } from '../components/HexBoard';
 import { SignModal } from '../components/SignModal';
 import { SignBoard } from '../components/SignBoard';
+import { exportSignPng } from '../components/signExport';
 import { KnowledgePage, SettingsPage } from '../features/pages';
 import { JournalPage } from '../features/journal/JournalPage';
 import { PreviewPage } from '../features/preview/PreviewPage';
@@ -329,6 +330,14 @@ export function App() {
       setExpandedStep(st.stepId);
     }
   }, []);
+
+  useEffect(() => {
+    if (!running) return;
+    const next = [1, 2, 3, 4, 5, 6, 7, 8, 9].find(
+      (n) => !steps.some((s) => s.stepId === n),
+    );
+    if (next) setExpandedStep(next);
+  }, [steps, running]);
 
   useEffect(() => {
     void (async () => {
@@ -1096,6 +1105,7 @@ export function App() {
     close: '收束',
   };
   const stageZh = STAGE_ZH[stageKey] ?? '接问';
+  const prevCase = recentCases.find((c) => c.id !== caseId);
 
   const phase: FlowPhase = verdict
     ? 'done'
@@ -1373,6 +1383,16 @@ export function App() {
             <span className="stage-chip" title="占者当前阶段">
               占者 · {stageZh}
             </span>
+            {prevCase ? (
+              <button
+                type="button"
+                className="ghost sm"
+                onClick={() => void openCase(prevCase.id)}
+                title="打开最近一卦（只读回看）"
+              >
+                上一卦
+              </button>
+            ) : null}
             <span className="spacer" />
             {running ? (
               <button
@@ -1454,6 +1474,9 @@ export function App() {
               ) : null}
               <div className="panel">
                 <h2>问一件事</h2>
+                <p className="hint home-intro">
+                  一事一占：写下所问，起卦后看九步与签。
+                </p>
                 <p className="muted">
                   {locked ? '已起卦 · 可继续解卦与同卦追问' : '写下想问的事，再起卦'}
                 </p>
@@ -2123,6 +2146,37 @@ export function App() {
 
               {(steps.length > 0 || running) && (
                 <>
+                  <div
+                    className="step-progress"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={9}
+                    aria-valuenow={doneCount}
+                    aria-label="解卦九步进度"
+                  >
+                    {Array.from({ length: 9 }, (_, i) => {
+                      const st = steps.find((x) => x.stepId === i + 1)?.status;
+                      const cur = running && !st;
+                      const cls = st
+                        ? st === 'failed' || st === 'need_key'
+                          ? 'bad'
+                          : st === 'skipped_by_method'
+                            ? 'skip'
+                            : 'done'
+                        : cur
+                          ? 'current'
+                          : 'pending';
+                      return (
+                        <span
+                          key={i}
+                          className={`seg ${cls}`}
+                          title={`第 ${i + 1} 步 ${
+                            st ? statusLabel(st) : cur ? '进行中' : '待执行'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
                   {running ? (
                     <p className="step-status">
                       <span className="step-status-dot" />
@@ -2362,6 +2416,40 @@ export function App() {
                       onClick={() => newSession()}
                     >
                       再来一卦
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        if (!cast || !verdict) return;
+                        const lines = cast.ben.lines ?? [];
+                        const yaoRows = [5, 4, 3, 2, 1, 0].map((idx) => {
+                          const pos = idx + 1;
+                          const v = lines[idx] ?? 8;
+                          return {
+                            pos,
+                            yang: v === 7 || v === 9,
+                            moving: cast.movingYao === pos,
+                          };
+                        });
+                        void exportSignPng({
+                          gradeLabel: gradeLabel(verdict.grade),
+                          guaName: cast.ben.name,
+                          movingLabel: cast.movingYao
+                            ? `动${cast.movingYao}`
+                            : undefined,
+                          yaoRows,
+                          upper: verdict.poem?.lines?.[0],
+                          lower: verdict.poem?.lines?.[1],
+                          brief: question,
+                          showDisclaimer: true,
+                          signNo: signNo ?? undefined,
+                        }).catch(() =>
+                          toast('error', '导出失败：可重试，或直接截屏'),
+                        );
+                      }}
+                    >
+                      保存签图
                     </button>
                     <button
                       type="button"
