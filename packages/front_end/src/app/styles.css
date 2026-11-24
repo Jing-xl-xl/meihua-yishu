@@ -4632,3 +4632,35 @@ button.primary:active:not(:disabled)::after {
     animation: none;
   }
 }
+
+/* 记忆页：说明、来源、画像小结 */
+.mem-help {
+  margin: 6px 0 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.mem-help summary {
+  cursor: pointer;
+}
+.mem-help ul {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  line-height: 1.8;
+  color: var(--ink-zhong);
+  font-size: 12px;
+}
+.mem-source {
+  font-size: 11px;
+  color: var(--ink-zhong);
+  opacity: 0.8;
+}
+.profile-summary {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  color: var(--cinnabar-deep);
+  font-size: 13px;
+  line-height: 1.7;
+}

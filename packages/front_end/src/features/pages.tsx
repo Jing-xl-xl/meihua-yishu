@@ -1391,6 +1391,34 @@ const TYPE_ZH: Record<string, string> = {
   anchor: '锚点',
 };
 
+/** 画像单句：取首句，超长截断（固定一句，不提供展开） */
+function oneSentence(text: string, max = 26): string {
+  const t = (text ?? '').trim();
+  if (!t) return '样本尚浅';
+  const first = t.split(/[。！？]/)[0]?.trim() || t;
+  return first.length > max ? `${first.slice(0, max)}…` : first;
+}
+
+/** 小结用：取第一个短分句（≤max） */
+function briefClause(text: string, max = 12): string {
+  const t = (text ?? '').trim().replace(/[。！？]$/, '');
+  if (!t) return '样本尚浅';
+  const first = t.split(/[，；、]/)[0]?.trim() || t;
+  return first.length > max ? `${first.slice(0, max)}…` : first;
+}
+
+/** 按四段内容拼一句总结（不引画像 sketch，保持与四段一致） */
+function profileSummary(
+  nature: string,
+  desire: string,
+  style: string,
+  withText: string,
+): string {
+  return `小结：${briefClause(nature)}；${briefClause(desire)}；${briefClause(
+    style,
+  )}；${briefClause(withText)}。`.replace(/^小结：小结：/, '小结：');
+}
+
 function isAnchor(m: { type: string; payload: Record<string, unknown> }) {
   return m.type === 'anchor';
 }
@@ -1470,7 +1498,7 @@ export function MemoryPage({ personId }: { personId: string | null }) {
   const [q, setQ] = useState('');
   const [anchorText, setAnchorText] = useState('');
   const [profileRefreshing, setProfileRefreshing] = useState(false);
-  const [expandedSlots, setExpandedSlots] = useState<Record<string, boolean>>({});
+
 
   const roundCount = mems.filter((m) => m.type === 'round' && !m.rejected).length;
 
@@ -1769,28 +1797,19 @@ export function MemoryPage({ personId }: { personId: string | null }) {
                   <div
                     className={`profile-texts${profileRefreshing ? ' refreshing' : ''}`}
                   >
-                    {slots.map(({ key, title, text }) => {
-                      const expanded = !!expandedSlots[key];
-                      return (
-                        <div key={key} className="slot">
-                          <h4>{title}</h4>
-                          <p className={expanded ? 'expanded' : undefined}>{text}</p>
-                          {text.length > 40 ? (
-                            <button
-                              type="button"
-                              className="slot-toggle"
-                              onClick={() =>
-                                setExpandedSlots((s) => ({ ...s, [key]: !s[key] }))
-                              }
-                            >
-                              {expanded ? '收起' : '展开'}
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                    <p className="hint" style={{ gridColumn: '1 / -1' }}>
-                      由对话用词与话题归纳；只读；不改变语气/人设。
+                    {slots.map(({ key, title, text }) => (
+                      <div key={key} className="slot">
+                        <h4>{title}</h4>
+                        <p>{oneSentence(text)}</p>
+                      </div>
+                    ))}
+                    <p className="profile-summary" style={{ gridColumn: '1 / -1' }}>
+                      {profileSummary(
+                        slots.find((x) => x.key === 'nature')?.text ?? '',
+                        slots.find((x) => x.key === 'desire')?.text ?? '',
+                        slots.find((x) => x.key === 'style')?.text ?? '',
+                        slots.find((x) => x.key === 'with')?.text ?? '',
+                      )}
                     </p>
                   </div>
                 );
@@ -1904,24 +1923,56 @@ export function MemoryPage({ personId }: { personId: string | null }) {
         </div>
       </div>
 
+      <details className="mem-help">
+        <summary className="hint">记忆说明（每一类从哪来、有什么用）</summary>
+        <ul>
+          <li>
+            <b>轮次</b>：每完成一卦自动记一条（问题/卦象/结论），供下次回忆。
+          </li>
+          <li>
+            <b>印象</b>：每卦自动写一条反思；「压缩长期印象」会把多条轮次合并成一条。
+          </li>
+          <li>
+            <b>应验</b>：回填「实际发生什么/是否应验」时写入，可触发画像重算。
+          </li>
+          <li>
+            <b>锚点</b>：右栏「经验锚」手建，全量参与解释。
+          </li>
+          <li>
+            <b>排除</b>：软隐藏、可恢复；<b>删除</b>：硬删、不可恢复。
+          </li>
+          <li>
+            未排除的记忆会注入九步/占断/追问，只影响解释与措辞，不改卦与算式。
+          </li>
+        </ul>
+      </details>
+
       <div className="filter-bar">
         {[
           ['all', '全部'],
           ['result', '应验'],
           ['anchor', '锚点'],
-          ['preference', '偏好'],
           ['round', '轮次'],
           ['summary', '印象'],
-        ].map(([t, label]) => (
-          <button
-            key={t}
-            type="button"
-            className={`chip${typeFilter === t ? ' active' : ''}`}
-            onClick={() => setTypeFilter(t)}
-          >
-            {label}
-          </button>
-        ))}
+        ].map(([t, label]) => {
+          const n = mems.filter((m) => {
+            if (m.rejected) return false;
+            if (t === 'all') return true;
+            if (t === 'anchor') return isAnchor(m as never);
+            return m.type === t && !isAnchor(m as never);
+          }).length;
+          return (
+            <button
+              key={t}
+              type="button"
+              className={`chip${typeFilter === t ? ' active' : ''}`}
+              onClick={() => setTypeFilter(t)}
+            >
+              {label}
+              {n > 0 ? ` ${n}` : ''}
+            </button>
+          );
+        })}
         <input
           placeholder="搜索"
           value={q}
@@ -1951,6 +2002,19 @@ export function MemoryPage({ personId }: { personId: string | null }) {
           <div className="row">
             <span className="badge">
               {isAnchor(m as never) ? '锚点' : TYPE_ZH[m.type] ?? m.type}
+            </span>
+            <span className="mem-source">
+              {isAnchor(m as never)
+                ? '手建'
+                : m.type === 'round'
+                  ? '案例记录'
+                  : m.type === 'result'
+                    ? '回填写入'
+                    : m.type === 'summary'
+                      ? '复盘/压缩'
+                      : m.type === 'preference'
+                        ? '纠偏'
+                        : ''}
             </span>
             <span className="mem-date">{m.createdAt?.slice(0, 10)}</span>
             <span className="spacer" />
