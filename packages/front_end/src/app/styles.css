@@ -4664,3 +4664,109 @@ button.primary:active:not(:disabled)::after {
   font-size: 13px;
   line-height: 1.7;
 }
+
+/* 八卦罗盘 v2：先后天切换 / 选中条 / 可聚焦节点 */
+.compass-head {
+  align-items: center;
+  gap: 10px;
+}
+.compass-head .ring-school {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.compass-head .ring-school button {
+  border: 0;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--ink-zhong);
+  cursor: pointer;
+}
+.compass-head .ring-school button.active {
+  background: var(--cinnabar-wash);
+  color: var(--cinnabar-deep);
+}
+.compass-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 2px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-jiao);
+}
+.compass-select b {
+  color: var(--cinnabar-deep);
+}
+.ring-node {
+  cursor: pointer;
+  outline: none;
+}
+.ring-node .ring-node-plate {
+  transition: stroke 140ms var(--ease-ink), transform 140ms var(--ease-ink);
+}
+.ring-node:hover .ring-node-plate {
+  stroke: var(--cinnabar);
+}
+.ring-node:focus-visible .ring-node-plate {
+  stroke: var(--cinnabar);
+  stroke-width: 2.4;
+}
+.ring-node.on text {
+  font-weight: 700;
+}
+.ring-center {
+  cursor: pointer;
+}
+.ring-center:focus-visible circle:first-child {
+  stroke: var(--cinnabar);
+  stroke-width: 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring-node .ring-node-plate {
+    transition: none;
+  }
+}
+@media (max-width: 600px) {
+  .ring-mountain {
+    display: none;
+  }
+  .compass-panel {
+    min-height: 0;
+  }
+  .compass-head {
+    flex-wrap: wrap;
+  }
+  .compass-select {
+    font-size: 12px;
+  }
+}
+/* 罗盘标题不再用伪元素追加“先天方位” */
+.compass-panel h3::after {
+  content: none;
+}
+
+
+/* 罗盘 v2：响应式尺寸 */
+.compass-panel .bagua-ring {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+}
+.ring-stage {
+  overflow: hidden;
+}
+@media (max-width: 600px) {
+  .compass-panel .bagua-ring {
+    max-width: 100%;
+  }
+  .ring-stage {
+    min-height: 0;
+  }
+}

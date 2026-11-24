@@ -2126,73 +2126,130 @@ const BAGUA_RING: Array<{ id: Gua; zh: string; wx: string; x: number; y: number 
   { id: 'dui', zh: '兑', wx: '金', x: 240, y: 100 },
 ];
 
+type RingSchool = 'xiantian' | 'houtian';
+
+/** 先天/后天八卦角度（0°=右/东，顺时针；-90°=上/南） */
+const RING_POS: Record<RingSchool, Record<Gua, number>> = {
+  xiantian: {
+    qian: -90,
+    xun: -45,
+    kan: 0,
+    gen: 45,
+    kun: 90,
+    zhen: 135,
+    li: 180,
+    dui: 225,
+  },
+  houtian: {
+    li: -90,
+    kun: -45,
+    dui: 0,
+    qian: 45,
+    kan: 90,
+    gen: 135,
+    zhen: 180,
+    xun: 225,
+  },
+};
+
+const TRIGRAM_META: Record<
+  Gua,
+  { wx: string; xian: string; hou: string; virtue: string }
+> = {
+  qian: { wx: '金', xian: '南', hou: '西北', virtue: '健' },
+  dui: { wx: '金', xian: '东南', hou: '西', virtue: '悦' },
+  li: { wx: '火', xian: '东', hou: '南', virtue: '丽' },
+  zhen: { wx: '木', xian: '东北', hou: '东', virtue: '动' },
+  xun: { wx: '木', xian: '西南', hou: '东南', virtue: '入' },
+  kan: { wx: '水', xian: '西', hou: '北', virtue: '陷' },
+  gen: { wx: '土', xian: '西北', hou: '东北', virtue: '止' },
+  kun: { wx: '土', xian: '北', hou: '西南', virtue: '顺' },
+};
+
+const WX_COLOR: Record<string, string> = {
+  金: 'var(--gold)',
+  木: 'var(--moss)',
+  水: 'var(--ti)',
+  火: 'var(--cinnabar)',
+  土: 'var(--tea)',
+};
+
+/** 二十四山（子北起，顺时针；外环只作地理参照，不可点） */
+const MOUNTAINS_24 = [
+  '子', '癸', '丑', '艮', '寅', '甲', '卯', '乙',
+  '辰', '巽', '巳', '丙', '午', '丁', '未', '坤',
+  '申', '庚', '酉', '辛', '戌', '乾', '亥', '壬',
+];
+
+const RING_ORDER: Gua[] = [
+  'qian', 'xun', 'kan', 'gen', 'kun', 'zhen', 'li', 'dui',
+];
+
+const R_CX = 400;
+const R_CY = 340;
+const R_NODE = 226;
+const R_MOUNTAIN = 300;
+const R_OUT = 332;
+
+function ringPoint(deg: number, r: number) {
+  const a = (deg * Math.PI) / 180;
+  return { x: R_CX + Math.cos(a) * r, y: R_CY + Math.sin(a) * r };
+}
+
+function annulusSector(
+  a0: number,
+  a1: number,
+  r0: number,
+  r1: number,
+): string {
+  const p0 = ringPoint(a0, r0);
+  const p1 = ringPoint(a0, r1);
+  const p2 = ringPoint(a1, r1);
+  const p3 = ringPoint(a1, r0);
+  const large = a1 - a0 > 180 ? 1 : 0;
+  return [
+    `M${p0.x.toFixed(1)},${p0.y.toFixed(1)}`,
+    `L${p1.x.toFixed(1)},${p1.y.toFixed(1)}`,
+    `A${r1},${r1} 0 ${large} 1 ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`,
+    `L${p3.x.toFixed(1)},${p3.y.toFixed(1)}`,
+    `A${r0},${r0} 0 ${large} 0 ${p0.x.toFixed(1)},${p0.y.toFixed(1)}`,
+    'Z',
+  ].join(' ');
+}
+
 function BaguaRing({
+  school,
   highlight,
   filterGua,
+  counts,
+  filterCount,
   onPick,
+  onReset,
+  onOpenLiuxiang,
 }: {
+  school: RingSchool;
   highlight: Gua[];
   filterGua?: Gua | null;
+  counts?: Partial<Record<Gua, number>>;
+  filterCount?: number;
   onPick: (g: Gua) => void;
+  onReset?: () => void;
+  onOpenLiuxiang?: (g: Gua) => void;
 }) {
   const activeSet = new Set<Gua>(highlight);
-  if (filterGua) activeSet.add(filterGua);
-  const active = filterGua ?? highlight[0] ?? null;
+  const selectedAngle = filterGua ? RING_POS[school][filterGua] : null;
+  const selectedZh = filterGua ? GUA_NAME_ZH[filterGua] : null;
+  const selectedMeta = filterGua ? TRIGRAM_META[filterGua] : null;
 
-  const YAO: Record<Gua, boolean[]> = {
-    qian: [true, true, true],
-    dui: [false, true, true],
-    li: [true, false, true],
-    zhen: [false, false, true],
-    xun: [true, true, false],
-    kan: [false, true, false],
-    gen: [true, false, false],
-    kun: [false, false, false],
-  };
-
-  const OPPOSITE: Partial<Record<Gua, Gua>> = {
-    qian: 'kun',
-    kun: 'qian',
-    kan: 'li',
-    li: 'kan',
-    zhen: 'xun',
-    xun: 'zhen',
-    gen: 'dui',
-    dui: 'gen',
-  };
-
-  /** 盘心（绘图） */
-  const CX = 400;
-  const CY = 340;
-  /** BAGUA_RING 角度原点（数据坐标系中心，见 §4.17.2c G-ORI） */
-  const LABEL_ORIGIN = { x: 400, y: 260 };
-  /** 铭文带：必须保证 CY ± (R_LABEL+48) 在 viewBox 内 */
-  const R_LABEL = 250;
-  /** viewBox 800×720：340±300 内含乾/坤牌 */
-
-  const nodePos = (g: { x: number; y: number }) => {
-    const ax = g.x - LABEL_ORIGIN.x;
-    const ay = g.y - LABEL_ORIGIN.y;
-    const ang = Math.atan2(ay, ax);
-    return {
-      x: CX + Math.cos(ang) * R_LABEL,
-      y: CY + Math.sin(ang) * R_LABEL,
-      ang,
-    };
-  };
-
-  const posOf = (id: Gua) => {
-    const g = BAGUA_RING.find((x) => x.id === id)!;
-    return nodePos(g);
-  };
+  const activate = (g: Gua) => onPick(g);
 
   return (
     <div className="ring-stage flat">
       <svg
         viewBox="0 0 800 720"
         className="bagua-ring"
-        role="img"
-        aria-label="先天八卦罗盘"
+        role="group"
+        aria-label={`${school === 'xiantian' ? '先天' : '后天'}八卦罗盘`}
       >
         <defs>
           <linearGradient id="goldBand" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -2201,317 +2258,224 @@ function BaguaRing({
             <stop offset="100%" stopColor="#a6843c" />
           </linearGradient>
           <radialGradient id="poolGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#b23a2e" stopOpacity="0.18" />
-            <stop offset="65%" stopColor="#b23a2e" stopOpacity="0.05" />
+            <stop offset="0%" stopColor="#b23a2e" stopOpacity="0.16" />
+            <stop offset="65%" stopColor="#b23a2e" stopOpacity="0.04" />
             <stop offset="100%" stopColor="#b23a2e" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="bandSheen" cx="50%" cy="35%" r="65%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.2" />
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.22" />
             <stop offset="55%" stopColor="#ffffff" stopOpacity="0.03" />
             <stop offset="100%" stopColor="#000000" stopOpacity="0.1" />
           </radialGradient>
         </defs>
 
-        {/* 天穹环 A+ · §4.17.3b（装饰） */}
+        {/* 纸面光池 */}
+        <circle cx={R_CX} cy={R_CY} r={250} fill="url(#poolGlow)" aria-hidden />
+
+        {/* 外环：双细线 + 二十四山刻度 */}
         <g aria-hidden="true" pointerEvents="none">
-          {(() => {
-            const R1 = 268;
-            const R2 = R1 * 0.92;
-            const guaNames: { id: Gua; zh: string }[] = BAGUA_RING.map((g) => ({
-              id: g.id,
-              zh: g.zh,
-            }));
+          <circle cx={R_CX} cy={R_CY} r={R_OUT} fill="none" stroke="var(--ink-jiao)" strokeWidth="1" opacity="0.16" />
+          <circle cx={R_CX} cy={R_CY} r={R_OUT - 6} fill="none" stroke="var(--ink-jiao)" strokeWidth="0.8" opacity="0.08" />
+          <circle cx={R_CX} cy={R_CY} r={R_MOUNTAIN - 8} fill="none" stroke="var(--ink-jiao)" strokeWidth="0.8" opacity="0.1" />
+          {MOUNTAINS_24.map((name, i) => {
+            const deg = -90 + i * 15;
+            const a = ringPoint(deg, R_MOUNTAIN + 8);
+            const b = ringPoint(deg, R_MOUNTAIN + 18);
+            const major = i % 3 === 0;
+            const label = ringPoint(deg, R_MOUNTAIN - 14);
             return (
-              <>
-                <circle cx={CX} cy={CY} r={R1} fill="none" stroke="var(--ink-jiao)" strokeWidth="1.1" opacity="0.12" />
-                <circle cx={CX} cy={CY} r={R2} fill="none" stroke="var(--ink-jiao)" strokeWidth="0.9" opacity="0.06" />
-                {Array.from({ length: 8 }).map((_, i) => {
-                  const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
-                  const long = i % 2 === 0;
-                  const len = long ? 14 : 10;
-                  return (
-                    <line
-                      key={`ct-${i}`}
-                      x1={CX + Math.cos(a) * (R1 - len)}
-                      y1={CY + Math.sin(a) * (R1 - len)}
-                      x2={CX + Math.cos(a) * R1}
-                      y2={CY + Math.sin(a) * R1}
-                      stroke="var(--ink-jiao)"
-                      strokeWidth="1"
-                      opacity="0.12"
-                    />
-                  );
-                })}
-                {guaNames.map((g) => {
-                  const raw = BAGUA_RING.find((x) => x.id === g.id)!;
-                  const pos = nodePos(raw);
-                  const ang = pos.ang;
-                  const r = R1 + 16;
-                  const x = CX + Math.cos(ang) * r;
-                  const y = CY + Math.sin(ang) * r;
-                  const deg = (ang * 180) / Math.PI + 90;
-                  return (
-                    <text
-                      key={`ct-${g.id}`}
-                      x={x}
-                      y={y}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontSize="11"
-                      fontFamily="Songti SC, STSong, serif"
-                      fill="var(--ink-jiao)"
-                      opacity="0.1"
-                      transform={`rotate(${deg} ${x} ${y})`}
-                    >
-                      {g.zh}
-                    </text>
-                  );
-                })}
-                {[0, 1, 2, 3].map((i) => {
-                  const a = (i / 4) * Math.PI * 2 - Math.PI / 2 + Math.PI / 8;
-                  const r = (R1 + R2) / 2;
-                  const x = CX + Math.cos(a) * r;
-                  const y = CY + Math.sin(a) * r;
-                  const deg = (a * 180) / Math.PI + 90;
-                  return (
-                    <path
-                      key={`cloud-${i}`}
-                      d="M-8 2 Q-4 -4 0 0 Q4 4 8 -2"
-                      fill="none"
-                      stroke="var(--ink-jiao)"
-                      strokeWidth="1"
-                      opacity="0.08"
-                      transform={`translate(${x} ${y}) rotate(${deg})`}
-                    />
-                  );
-                })}
-              </>
+              <g key={name}>
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="var(--ink-jiao)"
+                  strokeWidth={major ? 1 : 0.6}
+                  opacity={major ? 0.28 : 0.16}
+                />
+                <text
+                  className="ring-mountain"
+                  x={label.x}
+                  y={label.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize="9.5"
+                  fill="var(--ink-dan)"
+                  fontFamily="Songti SC, STSong, serif"
+                >
+                  {name}
+                </text>
+              </g>
             );
-          })()}
+          })}
         </g>
 
-        {/* 影贴盘底 */}
-        <ellipse cx={CX} cy={CY + 248} rx="190" ry="14" fill="rgba(28,24,20,0.08)" />
+        {/* 选中扇区 */}
+        {selectedAngle != null && (
+          <path
+            d={annulusSector(selectedAngle - 16, selectedAngle + 16, 196, 286)}
+            fill="var(--cinnabar-wash)"
+            stroke="var(--cinnabar)"
+            strokeOpacity="0.28"
+            strokeWidth="0.8"
+            aria-hidden
+          />
+        )}
 
-        {/* 外镜缘 + 齿 */}
-        <circle cx={CX} cy={CY} r="220" fill="var(--surface)" stroke="var(--ink-jiao)" strokeWidth="2" />
-        <circle cx={CX} cy={CY} r="210" fill="none" stroke="var(--ink-jiao)" strokeWidth="1" opacity="0.85" />
-        <circle cx={CX} cy={CY} r="202" fill="none" stroke="var(--ink-zhong)" strokeWidth="0.8" opacity="0.5" />
-        {Array.from({ length: 48 }).map((_, i) => {
-          const a = (i / 48) * Math.PI * 2 - Math.PI / 2;
-          const long = i % 6 === 0;
-          const mid = i % 3 === 0;
-          const r1 = long ? 202 : mid ? 206 : 209;
-          return (
-            <line
-              key={i}
-              x1={CX + Math.cos(a) * r1}
-              y1={CY + Math.sin(a) * r1}
-              x2={CX + Math.cos(a) * 210}
-              y2={CY + Math.sin(a) * 210}
-              stroke="var(--ink-jiao)"
-              strokeWidth={long ? 1.3 : 0.7}
-              opacity={long ? 0.9 : 0.4}
-              pointerEvents="none"
-            />
-          );
-        })}
-
-        {/* 金仪环带 */}
-        <circle cx={CX} cy={CY} r="184" fill="none" stroke="url(#goldBand)" strokeWidth="16" />
-        <circle cx={CX} cy={CY} r="184" fill="none" stroke="url(#bandSheen)" strokeWidth="16" pointerEvents="none" />
-        <circle cx={CX} cy={CY} r="192" fill="none" stroke="var(--gold)" strokeWidth="1.1" />
-        <circle cx={CX} cy={CY} r="176" fill="none" stroke="#5c4318" strokeWidth="1" opacity="0.75" />
-        {Array.from({ length: 8 }).map((_, i) => {
-          const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
-          return (
-            <g key={`slot-${i}`} pointerEvents="none">
-              <line
-                x1={CX + Math.cos(a) * 176}
-                y1={CY + Math.sin(a) * 176}
-                x2={CX + Math.cos(a) * 192}
-                y2={CY + Math.sin(a) * 192}
-                stroke="#5c4318"
-                strokeWidth="1.1"
-                opacity="0.55"
-              />
-              <rect
-                x={CX + Math.cos(a) * 184 - 2.5}
-                y={CY + Math.sin(a) * 184 - 2.5}
-                width="5"
-                height="5"
-                transform={`rotate(45 ${CX + Math.cos(a) * 184} ${CY + Math.sin(a) * 184})`}
-                fill="#5c4318"
-                opacity="0.7"
-              />
-            </g>
-          );
-        })}
-
-        {/* 内纹淡 */}
-        <circle cx={CX} cy={CY} r="158" fill="none" stroke="var(--ink-jiao)" strokeWidth="1" opacity="0.3" />
-        <circle cx={CX} cy={CY} r="140" fill="none" stroke="var(--ink-jiao)" strokeWidth="0.7" opacity="0.18" />
-        {Array.from({ length: 24 }).map((_, i) => {
-          const a = (i / 24) * Math.PI * 2 - Math.PI / 2;
-          return (
-            <line
-              key={`spoke-${i}`}
-              x1={CX + Math.cos(a) * 140}
-              y1={CY + Math.sin(a) * 140}
-              x2={CX + Math.cos(a) * 158}
-              y2={CY + Math.sin(a) * 158}
-              stroke="var(--ink-zhong)"
-              strokeWidth="0.6"
-              opacity="0.14"
-              pointerEvents="none"
-            />
-          );
-        })}
-
-        {/* 对宫弧：贴环带内侧，避开铭文 */}
-        {active && OPPOSITE[active] ? (
-          (() => {
-            const b = posOf(OPPOSITE[active]!);
-            const r = 200;
-            const cx = CX + Math.cos(b.ang) * r;
-            const cy = CY + Math.sin(b.ang) * r;
-            const deg = (b.ang * 180) / Math.PI + 90;
-            return (
-              <path
-                d={`M ${cx - 18} ${cy - 8} Q ${cx} ${cy + 8} ${cx + 18} ${cy - 8}`}
-                fill="none"
-                stroke="var(--cinnabar)"
-                strokeWidth="2"
-                opacity="0.9"
-                transform={`rotate(${deg} ${cx} ${cy})`}
-                pointerEvents="none"
-              />
-            );
-          })()
-        ) : null}
-
-        {/* 天心枢 */}
-        <circle cx={CX} cy={CY} r="72" fill="url(#poolGlow)" pointerEvents="none" />
-        <circle cx={CX} cy={CY} r="58" fill="#f6f0e4" stroke="var(--cinnabar)" strokeWidth="1.8" />
-        <circle cx={CX} cy={CY} r="48" fill="none" stroke="var(--gold)" strokeWidth="2" />
-        <circle cx={CX} cy={CY} r="40" fill="none" stroke="var(--ink-jiao)" strokeWidth="1" opacity="0.45" />
-        <text
-          x={CX}
-          y={CY + 10}
-          textAnchor="middle"
-          fontSize="30"
-          fill="var(--cinnabar)"
-          fontFamily="Songti SC, STSong, serif"
-          fontWeight="700"
-          style={{ letterSpacing: '0.06em' }}
-        >
-          先天
-        </text>
-
-        {/* 卦铭：外带 · 字层最后 · 热区无描边 */}
-        {BAGUA_RING.map((g) => {
-          const on = activeSet.has(g.id);
-          const yaos = YAO[g.id];
-          const pos = nodePos(g);
-          const yaoW = 36;
-          const yaoH = 4;
-          const yaoGap = 3.6;
-          const yaoTop = pos.y - 18;
-          const fill = on ? 'var(--cinnabar)' : 'var(--ink-jiao)';
+        {/* 八宫节点 */}
+        {RING_ORDER.map((g: Gua) => {
+          const angle = RING_POS[school][g];
+          const pos = ringPoint(angle, R_NODE);
+          const meta = TRIGRAM_META[g];
+          const zh = GUA_NAME_ZH[g];
+          const isSelected = filterGua === g;
+          const isHighlight = activeSet.has(g) && !isSelected;
+          const c = counts?.[g];
+          const bars = [0, 1, 2].map((i) => {
+            const yangMap: Record<Gua, boolean[]> = {
+              qian: [true, true, true],
+              dui: [false, true, true],
+              li: [true, false, true],
+              zhen: [false, false, true],
+              xun: [true, true, false],
+              kan: [false, true, false],
+              gen: [true, false, false],
+              kun: [false, false, false],
+            };
+            return yangMap[g][i];
+          });
           return (
             <g
-              key={g.id}
-              className={`bagua-node${on ? ' on' : ''}`}
-              tabIndex={0}
+              key={g}
+              className={`ring-node${isSelected ? ' on' : ''}${isHighlight ? ' hi' : ''}`}
+              transform={`translate(${pos.x.toFixed(1)} ${pos.y.toFixed(1)})`}
               role="button"
-              aria-label={`${g.zh} ${g.wx}`}
-              aria-pressed={on}
-              onClick={() => onPick(g.id)}
+              tabIndex={0}
+              aria-pressed={isSelected}
+              aria-label={`${zh}，${meta.wx}，${school === 'xiantian' ? meta.xian : meta.hou}${c != null ? `，含 ${c} 卦` : ''}`}
+              onClick={() => activate(g)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  onPick(g.id);
+                  activate(g);
                 }
               }}
             >
-              <title>{`${g.zh} · ${g.wx}`}</title>
-              {/* 热区：透明、无 stroke，避免 hover/on 描边 */}
-              <circle cx={pos.x} cy={pos.y} r={34} fill="transparent" stroke="none" />
-              {/* 焦点环（仅键盘） */}
+              <title>
+                {zh} · {meta.wx} · 先天{meta.xian} · 后天{meta.hou} · 卦德{meta.virtue}
+              </title>
+              {(isSelected || isHighlight) && (
+                <circle r={41} fill="none" stroke={isSelected ? 'var(--cinnabar)' : 'var(--gold)'} strokeWidth={isSelected ? 1.6 : 1.1} opacity={isSelected ? 0.45 : 0.3} />
+              )}
               <circle
-                className="node-focus"
-                cx={pos.x}
-                cy={pos.y + 2}
-                r="32"
-                fill="none"
-                stroke="none"
-                strokeWidth="2"
-                pointerEvents="none"
+                className="ring-node-plate"
+                r={32}
+                fill="var(--surface)"
+                stroke={isSelected ? 'var(--cinnabar)' : 'var(--line-strong)'}
+                strokeWidth={isSelected ? 2 : 1.1}
               />
-              {/* 可见牌：默认无底圆；选中朱晕 */}
-              <circle
-                className="node-plate"
-                cx={pos.x}
-                cy={pos.y + 2}
-                r="28"
-                fill={on ? 'rgba(178,58,46,0.12)' : 'transparent'}
-                stroke={on ? 'var(--cinnabar)' : 'none'}
-                strokeWidth="1.8"
-                pointerEvents="none"
-              />
-              {yaos.map((yang, yi) => {
-                const y = yaoTop + yi * (yaoH + yaoGap);
-                if (yang) {
-                  return (
-                    <rect
-                      key={yi}
-                      x={pos.x - yaoW / 2}
-                      y={y}
-                      width={yaoW}
-                      height={yaoH}
-                      fill={fill}
-                      rx="0.5"
-                    />
-                  );
-                }
-                return (
-                  <g key={yi}>
-                    <rect
-                      x={pos.x - yaoW / 2}
-                      y={y}
-                      width={yaoW * 0.4}
-                      height={yaoH}
-                      fill={fill}
-                      rx="0.5"
-                    />
-                    <rect
-                      x={pos.x + yaoW / 2 - yaoW * 0.4}
-                      y={y}
-                      width={yaoW * 0.4}
-                      height={yaoH}
-                      fill={fill}
-                      rx="0.5"
-                    />
+              {bars.map((yang, i) => {
+                const y = -19 + i * 6;
+                const w = 20;
+                return yang ? (
+                  <rect key={i} x={-w / 2} y={y} width={w} height={2.4} rx={0.6} fill="var(--ink-jiao)" />
+                ) : (
+                  <g key={i}>
+                    <rect x={-w / 2} y={y} width={8.4} height={2.4} rx={0.6} fill="var(--ink-jiao)" />
+                    <rect x={w / 2 - 8.4} y={y} width={8.4} height={2.4} rx={0.6} fill="var(--ink-jiao)" />
                   </g>
                 );
               })}
               <text
-                x={pos.x}
-                y={pos.y + 26}
+                x={0}
+                y={9}
                 textAnchor="middle"
-                fontSize="16"
-                fill={on ? 'var(--cinnabar)' : 'var(--ink-jiao)'}
+                dominantBaseline="central"
+                fontSize="15"
+                fontWeight="600"
+                fill={isSelected ? 'var(--cinnabar-deep)' : 'var(--ink-jiao)'}
                 fontFamily="Songti SC, STSong, serif"
-                fontWeight="700"
-                stroke="#f6f0e4"
-                strokeWidth="3.2"
-                style={{ paintOrder: 'stroke fill', letterSpacing: '0.06em' }}
               >
-                {g.zh}
+                {zh}
               </text>
+              <text
+                x={0}
+                y={48}
+                textAnchor="middle"
+                fontSize="10"
+                fill="var(--ink-dan)"
+              >
+                {school === 'xiantian' ? meta.xian : meta.hou}
+              </text>
+              <circle cx={25} cy={-23} r={4} fill={WX_COLOR[meta.wx] ?? 'var(--ink-dan)'} />
+              {c != null && (
+                <text
+                  x={25}
+                  y={-13}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fill="var(--cinnabar-deep)"
+                >
+                  {c}
+                </text>
+              )}
             </g>
           );
         })}
+
+        {/* 盘心：太极 + 选中信息（点击清空） */}
+        <g
+          className="ring-center"
+          transform={`translate(${R_CX} ${R_CY})`}
+          role="button"
+          tabIndex={0}
+          aria-label={filterGua ? '清空筛选' : '全部六十四卦'}
+          onClick={() => onReset?.()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onReset?.();
+            }
+          }}
+        >
+          <circle r={52} fill="var(--surface)" stroke="var(--line-strong)" strokeWidth="1" />
+          <g transform="translate(0 0)">
+            <circle r={42} fill="#f7f2e8" stroke="var(--ink-jiao)" strokeWidth="1.2" />
+            <path
+              d="M0 -42 A42 42 0 0 1 0 42 A21 21 0 0 1 0 0 A21 21 0 0 0 0 -42"
+              fill="var(--ink-jiao)"
+            />
+            <circle cx={0} cy={-21} r={7.5} fill="#f7f2e8" />
+            <circle cx={0} cy={21} r={7.5} fill="var(--ink-jiao)" />
+          </g>
+          <text
+            y={68}
+            textAnchor="middle"
+            fontSize={filterGua ? 13 : 12}
+            fill={filterGua ? 'var(--cinnabar-deep)' : 'var(--ink-zhong)'}
+            fontFamily="Songti SC, STSong, serif"
+          >
+            {selectedZh
+              ? `含${selectedZh} ${filterCount ?? counts?.[filterGua!] ?? 0} 卦`
+              : '点卦位筛选'}
+          </text>
+          {selectedMeta && onOpenLiuxiang && filterGua ? (
+            <text
+              y={88}
+              textAnchor="middle"
+              fontSize="10"
+              fill="var(--gold)"
+              style={{ cursor: 'pointer' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenLiuxiang(filterGua);
+              }}
+            >
+              看{selectedZh}之类象 ›
+            </text>
+          ) : null}
+        </g>
       </svg>
     </div>
   );
@@ -2546,6 +2510,25 @@ export function KnowledgePage() {
   const [guaFilter, setGuaFilter] = useState<Gua | null>(null);
   /** 观盘（§4.11 路线 A）：罗盘舞台默认收起 */
   const [showRing, setShowRing] = useState(false);
+  const [ringSchool, setRingSchool] = useState<RingSchool>('xiantian');
+
+  const hasExtraFilter =
+    !!q.trim() || upperF !== 'all' || lowerF !== 'all';
+  const ringCounts = useMemo(() => {
+    const out: Partial<Record<Gua, number>> = {};
+    if (!hasExtraFilter) return out;
+    const key = q.trim();
+    const base = HEXAGRAM_TABLE.filter(
+      (h) =>
+        (upperF === 'all' || h.upper === upperF) &&
+        (lowerF === 'all' || h.lower === lowerF) &&
+        (!key || h.name.includes(key) || String(h.kingwen) === key),
+    );
+    for (const g of GUA_IDS) {
+      out[g] = base.filter((h) => h.upper === g || h.lower === g).length;
+    }
+    return out;
+  }, [q, upperF, lowerF, hasExtraFilter]);
 
   const list = useMemo(() => {
     let arr = HEXAGRAM_TABLE.map((h) => ({
@@ -2780,16 +2763,80 @@ export function KnowledgePage() {
       <>
       {showRing && (
         <div className="panel compass-panel kg-stage">
-          <div className="row">
+          <div className="row compass-head">
             <h3>八卦罗盘</h3>
-            <span className="hint">先天方位 · 点卦位=「含X」筛选</span>
+            <div className="seg ring-school" role="group" aria-label="方位体系">
+              <button
+                type="button"
+                className={ringSchool === 'xiantian' ? 'active' : ''}
+                aria-pressed={ringSchool === 'xiantian'}
+                onClick={() => setRingSchool('xiantian')}
+              >
+                先天方位
+              </button>
+              <button
+                type="button"
+                className={ringSchool === 'houtian' ? 'active' : ''}
+                aria-pressed={ringSchool === 'houtian'}
+                onClick={() => setRingSchool('houtian')}
+              >
+                后天方位
+              </button>
+            </div>
+            <span className="hint">点卦位筛「含此卦」 · 再点取消</span>
+            <span className="spacer" />
+            {guaFilter && (
+              <button
+                type="button"
+                className="ghost sm"
+                onClick={() => setGuaFilter(null)}
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <div className="compass-select" role="status">
+            {guaFilter && TRIGRAM_META[guaFilter] ? (
+              <>
+                <span>
+                  已选：<b>{GUA_NAME_ZH[guaFilter]}</b> ·{' '}
+                  {TRIGRAM_META[guaFilter].wx} ·{' '}
+                  {ringSchool === 'xiantian'
+                    ? `先天${TRIGRAM_META[guaFilter].xian}`
+                    : `后天${TRIGRAM_META[guaFilter].hou}`}{' '}
+                  · 含 {list.length} 卦
+                </span>
+                <button
+                  type="button"
+                  className="ghost sm"
+                  onClick={() => {
+                    setKMode('liuxiang');
+                    setLxGua(guaFilter);
+                  }}
+                >
+                  看类象
+                </button>
+              </>
+            ) : (
+              <span className="hint">
+                点卦位筛选；盘心可清空。切先天/后天不丢筛选。
+              </span>
+            )}
           </div>
           <BaguaRing
+            school={ringSchool}
             highlight={
               upId && loId ? [upId, loId] : guaFilter ? [guaFilter] : []
             }
             filterGua={guaFilter}
+            counts={ringCounts}
+            filterCount={list.length}
             onPick={(g) => setGuaFilter((cur) => (cur === g ? null : g))}
+            onReset={() => setGuaFilter(null)}
+            onOpenLiuxiang={(g) => {
+              setKMode('liuxiang');
+              setLxGua(g);
+            }}
           />
         </div>
       )}
